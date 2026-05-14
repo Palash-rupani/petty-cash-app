@@ -26,7 +26,7 @@ export function ReceiptUpload({ value, onChange, onUploadingChange, disabled }: 
   const handleFile = async (file: File) => {
     if (!file) return
     if (file.size > 5 * 1024 * 1024) { setError('File size must be under 5 MB'); return }
-    if (!['image/jpeg','image/png','image/webp','application/pdf'].includes(file.type)) {
+    if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(file.type)) {
       setError('Only JPG, PNG, WebP, or PDF files are allowed'); return
     }
     setUploadState(true); setError(null)
@@ -50,11 +50,39 @@ export function ReceiptUpload({ value, onChange, onUploadingChange, disabled }: 
     setRemoving(true); setError(null)
     try {
       const path = value.split('/receipts/')[1]
-      if (path) await supabase.storage.from('receipts').remove([path])
+      console.log('Receipt URL:', value)
+      console.log('Extracted path:', path)
+      if (path) {
+        const deletePromise = supabase.storage
+          .from('receipts')
+          .remove([path])
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Delete timeout')), 3000)
+        )
+
+        try {
+          const { error } = await Promise.race([
+            deletePromise,
+            timeoutPromise,
+          ]) as { error: Error | null }
+
+          if (error) {
+            console.error('Storage delete failed:', error)
+          }
+        } catch (err) {
+          console.error('Storage delete timeout/error:', err)
+        }
+      }
     } catch { /* non-fatal — form state still cleared below */ } finally {
+
       onChange(null)
+      onUploadingChange?.(false)
       setRemoving(false)
-      if (inputRef.current) inputRef.current.value = ''
+
+      if (inputRef.current) {
+        inputRef.current.value = ''
+      }
     }
   }
 

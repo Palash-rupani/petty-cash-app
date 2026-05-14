@@ -38,6 +38,12 @@ const navItems: NavItem[] = [
     roles: ['store_manager', 'cluster_manager', 'accounting'],
   },
   {
+    label: 'My Reports',
+    href: '/my-reports',
+    icon: <BarChart3 size={18} />,
+    roles: ['store_manager'],
+  },
+  {
     label: 'Approvals',
     href: '/approvals',
     icon: <CheckSquare size={18} />,
