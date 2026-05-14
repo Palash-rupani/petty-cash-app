@@ -1,5 +1,5 @@
 'use client'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { Bell, LogOut } from 'lucide-react'
 
@@ -14,12 +14,10 @@ const pageTitles: Record<string, string> = {
 export function Header() {
   const pathname = usePathname()
   const { user, signOut } = useAuth()
-  const router = useRouter()
   const title = pageTitles[pathname] ?? 'VS Corp'
 
   const handleSignOut = async () => {
     await signOut()
-    router.push('/login')
   }
 
   return (

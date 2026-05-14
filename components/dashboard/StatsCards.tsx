@@ -64,7 +64,10 @@ function StoreManagerStats({ user }: StoreManagerStatsProps) {
       ])
 
       const expenses = expensesRes.data ?? []
-      const totalSpend = expenses.reduce((sum, e) => sum + Number(e.amount), 0)
+      const excluded = ['draft', 'cluster_rejected', 'accounting_rejected']
+      const totalSpend = expenses
+        .filter((e) => !excluded.includes(e.status))
+        .reduce((sum, e) => sum + Number(e.amount), 0)
       const pending = expenses.filter((e) => e.status === 'submitted').length
       const approved = expenses.filter((e) =>
         ['accounting_approved', 'synced_to_tally'].includes(e.status)

@@ -126,105 +126,50 @@ export function ExpenseForm({ onSuccess }: ExpenseFormProps) {
     status: 'draft' | 'submitted'
   ) => {
     if (!user?.store_id) {
-      setError(
-        'No store associated with your account. Contact admin.'
-      )
+      setError('No store associated with your account. Contact admin.')
       return
     }
 
     if (receiptUploading) {
-      setError(
-        'Please wait for the receipt to finish uploading.'
-      )
+      setError('Please wait for the receipt to finish uploading.')
       return
     }
 
     setError(null)
 
-    const setSending =
-      status === 'submitted'
-        ? setSubmitting
-        : setSaving
-
+    const setSending = status === 'submitted' ? setSubmitting : setSaving
     setSending(true)
 
     try {
-      const now = new Date()
+      const res = await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category_id: values.category_id,
+          amount: values.amount,
+          description: values.description ?? null,
+          receipt_url: receiptUrl,
+          status,
+        }),
+      })
 
-      const expenseMonth = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        1
-      )
-        .toISOString()
-        .split('T')[0]
-
-      console.log('===== SUBMIT START =====')
-
-      const payload = {
-        store_id: user.store_id,
-        created_by: user.id,
-        category_id: values.category_id,
-        amount: values.amount,
-        description: values.description ?? null,
-        receipt_url: receiptUrl,
-        expense_month: expenseMonth,
-        status,
-      }
-
-      console.log('Insert payload:', payload)
-
-      // SIMPLE INSERT ONLY
-      const { error: insertError } =
-        await supabase
-          .from('expenses')
-          .insert(payload)
-
-      if (insertError) {
-        console.error(
-          'INSERT ERROR:',
-          JSON.stringify(insertError, null, 2)
-        )
-
-        setError(
-          insertError.message ||
-          'Failed to create expense'
-        )
-
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setError(body.error ?? 'Failed to create expense')
         return
       }
 
-      console.log(
-        'Expense inserted successfully'
-      )
-
-      // TEMPORARILY REMOVE AUDIT LOGS
-      // We are testing insert speed/hanging
-
       setSuccess(true)
-
       reset()
-
       setReceiptUrl(null)
-
-      console.log('===== SUBMIT SUCCESS =====')
 
       setTimeout(() => {
         onSuccess?.()
       }, 800)
-
     } catch (err) {
-      console.error('CATCH ERROR:', err)
-
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Something went wrong. Please try again.'
-      )
+      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
     } finally {
       setSending(false)
-
-      console.log('===== SUBMIT END =====')
     }
   }
 
