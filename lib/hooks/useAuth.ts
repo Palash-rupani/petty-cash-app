@@ -8,53 +8,70 @@ import type { User } from '@/types'
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+
   const supabase = createClient()
   const router = useRouter()
 
   useEffect(() => {
-    const fetchUser = async () => {
-      const {
-        data: { user: authUser },
-      } = await supabase.auth.getUser()
+    let mounted = true
 
-      if (authUser) {
+    const loadUser = async () => {
+      try {
+        setLoading(true)
+
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser()
+
+        if (!authUser) {
+          if (mounted) {
+            setUser(null)
+          }
+          return
+        }
+
         const { data: profile } = await supabase
           .from('users')
           .select('*')
           .eq('id', authUser.id)
           .single()
 
-        setUser(profile ?? null)
-      } else {
-        setUser(null)
+        if (mounted) {
+          setUser(profile ?? null)
+        }
+      } catch (err) {
+        console.error('Auth load error:', err)
+
+        if (mounted) {
+          setUser(null)
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
       }
-      setLoading(false)
     }
 
-    fetchUser()
+    loadUser()
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', session.user.id)
-          .single()
-        setUser(profile ?? null)
-      } else {
-        setUser(null)
-      }
-      setLoading(false)
+    } = supabase.auth.onAuthStateChange((_event) => {
+      loadUser()
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
   }, [])
 
   const signOut = async () => {
     await supabase.auth.signOut()
-    router.push('/login')
+
+    setUser(null)
+
+    router.replace('/login')
     router.refresh()
   }
 
