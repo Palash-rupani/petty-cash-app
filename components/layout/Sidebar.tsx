@@ -55,6 +55,12 @@ const navItems: NavItem[] = [
     icon: <BarChart3 size={18} />,
     roles: ['accounting'],
   },
+  {
+    label: 'Cluster Reports',
+    href: '/cluster-reports',
+    icon: <BarChart3 size={18} />,
+    roles: ['cluster_manager'],
+  },
 ]
 
 const roleLabels: Record<Role, string> = {
