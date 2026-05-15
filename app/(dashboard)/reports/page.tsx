@@ -9,7 +9,7 @@ import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { exportCSV } from '@/lib/utils/exportCSV'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { Download, BarChart3 } from 'lucide-react'
+import { Download, BarChart3, Plus, Wallet } from 'lucide-react'
 import { format } from 'date-fns'
 
 interface ReportRow {
@@ -34,13 +34,27 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
   const [clusters, setClusters] = useState<{ id: string; name: string }[]>([])
   const [selectedCluster, setSelectedCluster] = useState('')
+  
+  // Top-up form state
+  const [allStores, setAllStores] = useState<{ id: string, name: string }[]>([])
+  const [topUpStore, setTopUpStore] = useState('')
+  const [topUpAmount, setTopUpAmount] = useState('')
+  const [topUpRemarks, setTopUpRemarks] = useState('')
+  const [topUpLoading, setTopUpLoading] = useState(false)
+  const [topUpSuccess, setTopUpSuccess] = useState(false)
+  const [topUpError, setTopUpError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchClusters = async () => {
       const { data: clusterData } = await supabase.from('clusters').select('id, name').order('name')
       setClusters(clusterData ?? [])
     }
+    const fetchAllStores = async () => {
+      const { data: storeData } = await supabase.from('stores').select('id, name').order('name')
+      setAllStores(storeData ?? [])
+    }
     fetchClusters()
+    fetchAllStores()
   }, [])
 
   useEffect(() => {
@@ -127,6 +141,41 @@ export default function ReportsPage() {
     exportCSV(exportData, `vscorp-petty-cash-${month}`)
   }
 
+  const handleAddCash = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!topUpStore || !topUpAmount || Number(topUpAmount) <= 0) {
+      setTopUpError('Please fill all fields correctly')
+      return
+    }
+
+    setTopUpLoading(true)
+    setTopUpError(null)
+    setTopUpSuccess(false)
+
+    try {
+      const { error: insertError } = await supabase.from('cash_transactions').insert({
+        store_id: topUpStore,
+        created_by: user.id,
+        type: 'credit',
+        amount: Number(topUpAmount),
+        remarks: topUpRemarks || 'Petty cash top-up',
+      })
+
+      if (insertError) throw insertError
+
+      setTopUpSuccess(true)
+      setTopUpStore('')
+      setTopUpAmount('')
+      setTopUpRemarks('')
+      // Small delay before hiding success message
+      setTimeout(() => setTopUpSuccess(false), 3000)
+    } catch (err) {
+      setTopUpError(err instanceof Error ? err.message : 'Failed to add cash')
+    } finally {
+      setTopUpLoading(false)
+    }
+  }
+
   return (
     <div className="max-w-6xl space-y-4">
       {/* Header */}
@@ -140,6 +189,74 @@ export default function ReportsPage() {
           Export CSV
         </Button>
       </div>
+
+      {/* Add Petty Cash Card */}
+      <Card>
+        <div className="p-4 border-b border-slate-100 flex items-center gap-2">
+          <Wallet className="w-4 h-4 text-indigo-600" />
+          <h3 className="font-semibold text-slate-800">Add Petty Cash</h3>
+        </div>
+        <form onSubmit={handleAddCash} className="p-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Store</label>
+              <select
+                required
+                value={topUpStore}
+                onChange={(e) => setTopUpStore(e.target.value)}
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white transition-all"
+              >
+                <option value="">Select Store...</option>
+                {allStores.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Amount (₹)</label>
+              <input
+                required
+                type="number"
+                min="1"
+                placeholder="0.00"
+                value={topUpAmount}
+                onChange={(e) => setTopUpAmount(e.target.value)}
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+              />
+            </div>
+            <div className="md:col-span-1">
+              <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Remarks</label>
+              <input
+                type="text"
+                placeholder="Optional remarks..."
+                value={topUpRemarks}
+                onChange={(e) => setTopUpRemarks(e.target.value)}
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+              />
+            </div>
+            <div className="flex items-end">
+              <Button 
+                type="submit" 
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-all py-2"
+                loading={topUpLoading}
+              >
+                <Plus className="w-4 h-4 mr-1" /> Add Cash
+              </Button>
+            </div>
+          </div>
+          
+          {topUpError && (
+            <p className="mt-3 text-xs text-red-500 font-medium flex items-center gap-1">
+              <span className="w-1 h-1 bg-red-500 rounded-full" /> {topUpError}
+            </p>
+          )}
+          {topUpSuccess && (
+            <p className="mt-3 text-xs text-green-600 font-medium flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Cash added successfully to the store ledger.
+            </p>
+          )}
+        </form>
+      </Card>
 
       {/* Filters */}
       <Card>
