@@ -1,4 +1,5 @@
 'use client'
+
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Expense } from '@/types'
@@ -7,14 +8,21 @@ export function useApprovals() {
   const [pendingExpenses, setPendingExpenses] = useState<Expense[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
   const supabase = createClient()
 
   const fetchPending = useCallback(async () => {
     setLoading(true)
     setError(null)
+
     try {
-      const { data: { user: authUser } } = await supabase.auth.getUser()
-      if (!authUser) throw new Error('Not authenticated')
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser()
+
+      if (!authUser) {
+        throw new Error('Not authenticated')
+      }
 
       const { data: userData } = await supabase
         .from('users')
@@ -23,8 +31,12 @@ export function useApprovals() {
         .single()
 
       const role = userData?.role
+
       let statusFilter = 'submitted'
-      if (role === 'accounting') statusFilter = 'cluster_approved'
+
+      if (role === 'accounting') {
+        statusFilter = 'cluster_approved'
+      }
 
       const { data, error: fetchError } = await supabase
         .from('expenses')
@@ -37,52 +49,131 @@ export function useApprovals() {
         .eq('status', statusFilter)
         .order('created_at', { ascending: true })
 
-      if (fetchError) throw fetchError
+      if (fetchError) {
+        throw fetchError
+      }
+
       setPendingExpenses((data as Expense[]) ?? [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load approvals')
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Failed to load approvals'
+      )
     } finally {
       setLoading(false)
     }
   }, [])
 
-  const approveExpense = async (expenseId: string, role: string, remarks?: string) => {
-    const newStatus = role === 'cluster_manager' ? 'cluster_approved' : 'accounting_approved'
-    const approverField = role === 'cluster_manager' ? 'cluster_approved_by' : 'accounting_approved_by'
+  const approveExpense = async (
+    expenseId: string,
+    role: string,
+    remarks?: string
+  ) => {
+    const newStatus =
+      role === 'cluster_manager'
+        ? 'cluster_approved'
+        : 'accounting_approved'
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { error: 'Not authenticated' }
+    const approverField =
+      role === 'cluster_manager'
+        ? 'cluster_approved_by'
+        : 'accounting_approved_by'
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      return { error: 'Not authenticated' }
+    }
 
     const { error: updateError } = await supabase
       .from('expenses')
-      .update({ status: newStatus, [approverField]: user.id })
+      .update({
+        status: newStatus,
+        [approverField]: user.id,
+      })
       .eq('id', expenseId)
 
-    if (updateError) return { error: updateError.message }
+    if (updateError) {
+      return { error: updateError.message }
+    }
 
+    // Create ledger debit transaction
+    if (newStatus === 'accounting_approved') {
+      const { data: expenseData } = await supabase
+        .from('expenses')
+        .select('id, store_id, amount, description')
+        .eq('id', expenseId)
+        .single()
+
+      if (expenseData) {
+        // Prevent duplicate deductions
+        const { data: existingTxn } = await supabase
+          .from('cash_transactions')
+          .select('id')
+          .eq('reference_expense_id', expenseId)
+          .maybeSingle()
+
+        if (!existingTxn) {
+          await supabase.from('cash_transactions').insert({
+            store_id: expenseData.store_id,
+            created_by: user.id,
+            type: 'debit',
+            amount: expenseData.amount,
+            remarks: `Approved expense: ${expenseData.description ?? 'Expense deduction'
+              }`,
+            reference_expense_id: expenseId,
+          })
+        }
+      }
+    }
+
+    // Audit log
     await supabase.from('audit_logs').insert({
       expense_id: expenseId,
       action: newStatus,
       performed_by: user.id,
-      remarks: remarks ?? `Approved by ${role.replace('_', ' ')}`,
+      remarks:
+        remarks ??
+        `Approved by ${role.replace('_', ' ')}`,
     })
 
     await fetchPending()
+
     return { error: null }
   }
 
-  const rejectExpense = async (expenseId: string, role: string, rejectionReason: string) => {
-    const newStatus = role === 'cluster_manager' ? 'cluster_rejected' : 'accounting_rejected'
+  const rejectExpense = async (
+    expenseId: string,
+    role: string,
+    rejectionReason: string
+  ) => {
+    const newStatus =
+      role === 'cluster_manager'
+        ? 'cluster_rejected'
+        : 'accounting_rejected'
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { error: 'Not authenticated' }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      return { error: 'Not authenticated' }
+    }
 
     const { error: updateError } = await supabase
       .from('expenses')
-      .update({ status: newStatus, rejection_reason: rejectionReason })
+      .update({
+        status: newStatus,
+        rejection_reason: rejectionReason,
+      })
       .eq('id', expenseId)
 
-    if (updateError) return { error: updateError.message }
+    if (updateError) {
+      return { error: updateError.message }
+    }
 
     await supabase.from('audit_logs').insert({
       expense_id: expenseId,
@@ -92,6 +183,7 @@ export function useApprovals() {
     })
 
     await fetchPending()
+
     return { error: null }
   }
 
@@ -99,5 +191,12 @@ export function useApprovals() {
     fetchPending()
   }, [fetchPending])
 
-  return { pendingExpenses, loading, error, approveExpense, rejectExpense, refetch: fetchPending }
+  return {
+    pendingExpenses,
+    loading,
+    error,
+    approveExpense,
+    rejectExpense,
+    refetch: fetchPending,
+  }
 }

@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
+import { getStoreBalance } from '@/lib/utils/getStoreBalance'
 import { Card, CardHeader, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import {
@@ -50,6 +51,7 @@ interface Expense {
     created_at: string;
     receipt_url: string | null;
     categories: { name: string } | null;
+    store?: { monthly_limit: number };
 }
 
 interface StoreInfo {
@@ -185,6 +187,7 @@ export default function StoreManagerReportPage() {
     const [trendData, setTrendData] = useState<{ month: string; amount: number }[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [balance, setBalance] = useState(0);
 
     // Filters
     const [timeRange, setTimeRange] = useState<TimeRange>("this_month");
@@ -202,6 +205,15 @@ export default function StoreManagerReportPage() {
             });
     }, [user?.store_id]);
 
+    useEffect(() => {
+        async function loadBalance() {
+            if (!user?.store_id) return
+            const value = await getStoreBalance(user.store_id)
+            setBalance(value)
+        }
+        loadBalance()
+    }, [user, expenses])
+
     // ── Fetch expenses in date range ─────────────────────────────────────────
     useEffect(() => {
         if (!user?.store_id) return;
@@ -209,7 +221,7 @@ export default function StoreManagerReportPage() {
         const { from, to } = getDateRange(timeRange, customFrom, customTo);
         setLoading(true);
         supabase.from("expenses")
-            .select("id, amount, status, expense_month, created_at, receipt_url, categories(name)")
+            .select("id, amount, status, expense_month, created_at, receipt_url, categories(name), store:stores(monthly_limit)")
             .eq("store_id", user.store_id)
             .gte("created_at", from).lte("created_at", to)
             .order("created_at", { ascending: false })
@@ -222,6 +234,9 @@ export default function StoreManagerReportPage() {
                     categories: Array.isArray(row.categories)
                         ? (row.categories[0] ?? null)
                         : row.categories,
+                    store: Array.isArray(row.store)
+                        ? (row.store[0] ?? null)
+                        : row.store,
                 })) as Expense[];
                 setExpenses(normalised);
             });
@@ -274,8 +289,8 @@ export default function StoreManagerReportPage() {
         [expenses]
     );
 
-    const monthlyLimit = store?.monthly_limit ?? 0;
-    const budgetRemaining = monthlyLimit - totalApproved;
+    const monthlyLimit = expenses[0]?.store?.monthly_limit ?? 0;
+    const budgetRemaining = (store?.monthly_limit ?? 0) - totalApproved;
     const approvedPct = pct(totalApproved, monthlyLimit);
     const pendingPct = pct(totalPending, monthlyLimit);
     const combinedPct = pct(totalApproved + totalPending, monthlyLimit);
@@ -401,12 +416,32 @@ export default function StoreManagerReportPage() {
           SECTION A — Core Stats
       ══════════════════════════════════════════════════════════════════════ */}
             <SectionHeading title="Overview" />
+            
+            <div className="mb-6">
+                <Card className="max-w-sm rounded-xl border border-slate-200 shadow-sm">
+                    <div className="p-5">
+                        <p className="text-sm text-slate-500 font-medium">Available Cash</p>
+                        <h2 className="text-3xl font-bold text-slate-800 mt-2">
+                            {formatCurrency(balance)}
+                        </h2>
+                    </div>
+                </Card>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
                 <StatCard icon={<Wallet className="w-5 h-5 text-indigo-600" />} bg="bg-indigo-50"
                     label="Total Spent (Approved)" value={formatCurrency(totalApproved)} />
-                <StatCard icon={<TrendingUp className="w-5 h-5 text-emerald-600" />} bg="bg-emerald-50"
-                    label="Budget Remaining" value={formatCurrency(Math.max(budgetRemaining, 0))}
-                    sub={budgetRemaining < 0 ? "Over budget" : undefined} subColor="text-red-500" />
+                <Card>
+                    <div className="p-5">
+                        <p className="text-sm text-slate-500">
+                            Monthly Limit
+                        </p>
+
+                        <h2 className="text-3xl font-bold text-slate-800 mt-2">
+                            {formatCurrency(monthlyLimit)}
+                        </h2>
+                    </div>
+                </Card>
                 <StatCard icon={<Receipt className="w-5 h-5 text-violet-600" />} bg="bg-violet-50"
                     label="Number of Expenses" value={String(expenses.length)} />
                 <StatCard icon={<ArrowUpCircle className="w-5 h-5 text-amber-600" />} bg="bg-amber-50"
