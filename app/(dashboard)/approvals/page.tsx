@@ -110,6 +110,8 @@ export default function ApprovalsPage() {
                     <td className="px-6 py-3 text-right">
                       <ApprovalActions
                         expenseId={expense.id}
+                        storeId={expense.store_id}
+                        expenseAmount={expense.amount}
                         userRole={user.role}
                         onDone={refetch}
                       />
@@ -149,6 +151,8 @@ export default function ApprovalsPage() {
                 <div className="flex justify-end">
                   <ApprovalActions
                     expenseId={expense.id}
+                    storeId={expense.store_id}
+                    expenseAmount={expense.amount}
                     userRole={user.role}
                     onDone={refetch}
                   />

@@ -1,33 +1,36 @@
 import { createClient } from '@/lib/supabase/client'
 
-export async function getStoreBalance(storeId: string) {
+/**
+ * Fetches the current ledger balance for a store from cash_transactions.
+ *
+ * Formula: SUM(credits + adjustments) - SUM(debits)
+ *
+ * Returns:
+ *   number  — the calculated balance (may be 0 or negative, both valid)
+ *   null    — balance could not be determined (network error, RLS failure, etc.)
+ *
+ * Callers MUST treat null as "unavailable" and must NOT fall back to 0,
+ * as 0 is a legitimate balance value.
+ */
+export async function getStoreBalance(storeId: string): Promise<number | null> {
     const supabase = createClient()
 
-    console.log('Balance storeId:', storeId)
     const { data, error } = await supabase
         .from('cash_transactions')
         .select('type, amount')
         .eq('store_id', storeId)
 
-    console.log('Transactions:', data)
-    console.log('Balance error:', error)
+    if (error) return null
+    if (!data) return null
 
-    if (error || !data) {
-        return 0
-    }
-
-    const balance = data.reduce((total, txn) => {
+    // Empty ledger is a valid state — no transactions means zero balance
+    return data.reduce((total, txn) => {
         if (txn.type === 'credit' || txn.type === 'adjustment') {
             return total + Number(txn.amount)
         }
-
         if (txn.type === 'debit') {
             return total - Number(txn.amount)
         }
-
         return total
     }, 0)
-
-    console.log('Calculated balance:', balance)
-    return balance
 }

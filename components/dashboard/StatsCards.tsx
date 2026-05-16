@@ -46,9 +46,10 @@ function StoreManagerStats({ user }: StoreManagerStatsProps) {
   useEffect(() => {
     const fetchStats = async () => {
       const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-        .toISOString()
-        .split('T')[0]
+      // Build YYYY-MM-01 directly from local date parts.
+      // Never use new Date(y,m,d).toISOString().split('T')[0] — in IST (UTC+5:30)
+      // local midnight converts to the previous UTC day, corrupting the DATE filter.
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
 
       const [expensesRes, storeRes] = await Promise.all([
         supabase
@@ -164,9 +165,7 @@ function ClusterManagerStats({ user }: ClusterManagerStatsProps) {
       if (!stores) return
 
       const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-        .toISOString()
-        .split('T')[0]
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
 
       const storeIds = stores.map((s) => s.id)
       const { data: expenses } = await supabase
@@ -274,9 +273,7 @@ function AccountingStats({ user: _user }: AccountingStatsProps) {
   useEffect(() => {
     const fetchStats = async () => {
       const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-        .toISOString()
-        .split('T')[0]
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
 
       const { data: expenses } = await supabase
         .from('expenses')

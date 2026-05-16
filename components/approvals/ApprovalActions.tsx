@@ -3,25 +3,61 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
-import { CheckCircle, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
 import { useApprovals } from '@/lib/hooks/useApprovals'
+import { getStoreBalance } from '@/lib/utils/getStoreBalance'
 import type { Role } from '@/types'
 
 interface ApprovalActionsProps {
   expenseId: string
+  /** Store ID is required so we can fetch the current balance before accounting approval. */
+  storeId: string
+  /** The expense amount in the same currency unit as the ledger (e.g. paise or rupees). */
+  expenseAmount: number
   userRole: Role
   onDone?: () => void
 }
 
-export function ApprovalActions({ expenseId, userRole, onDone }: ApprovalActionsProps) {
+/** Roles that perform the final accounting approval and therefore need balance warnings. */
+const ACCOUNTING_ROLES: Role[] = ['accounting']
+
+function isAccountingRole(role: Role): boolean {
+  return ACCOUNTING_ROLES.includes(role)
+}
+
+/** Format a rupee amount, handling negatives cleanly. */
+function formatINR(amount: number): string {
+  const abs = Math.abs(amount)
+  const formatted = new Intl.NumberFormat('en-IN').format(abs)
+  return amount < 0 ? `₹-${formatted}` : `₹${formatted}`
+}
+
+export function ApprovalActions({
+  expenseId,
+  storeId,
+  expenseAmount,
+  userRole,
+  onDone,
+}: ApprovalActionsProps) {
   const { approveExpense, rejectExpense } = useApprovals()
+
+  // ── Rejection state ────────────────────────────────────────────────────────
   const [rejectOpen, setRejectOpen] = useState(false)
   const [reason, setReason] = useState('')
-  const [approving, setApproving] = useState(false)
   const [rejecting, setRejecting] = useState(false)
+
+  // ── Approval state ─────────────────────────────────────────────────────────
+  const [approving, setApproving] = useState(false)
+
+  // ── Negative-balance warning state ─────────────────────────────────────────
+  const [warnOpen, setWarnOpen] = useState(false)
+  // null = balance fetch failed; number = confirmed ledger balance (may be 0 or negative)
+  const [currentBalance, setCurrentBalance] = useState<number | null>(null)
+
   const [error, setError] = useState<string | null>(null)
 
-  const handleApprove = async () => {
+  // ── Core approve action (runs after any warning is acknowledged) ────────────
+  const executeApprove = async () => {
     setApproving(true)
     const { error: err } = await approveExpense(expenseId, userRole)
     setApproving(false)
@@ -29,6 +65,46 @@ export function ApprovalActions({ expenseId, userRole, onDone }: ApprovalActions
     onDone?.()
   }
 
+  // ── Primary approve handler ────────────────────────────────────────────────
+  const handleApprove = async () => {
+    setError(null)
+
+    // Only accounting roles get the balance pre-check
+    if (!isAccountingRole(userRole)) {
+      await executeApprove()
+      return
+    }
+
+    // Fetch current store balance before approving
+    setApproving(true)
+    const balance = await getStoreBalance(storeId)
+    setApproving(false)
+
+    if (balance === null) {
+      setError('Could not fetch store balance. Please try again.')
+      return
+    }
+
+    const projectedBalance = balance - expenseAmount
+
+    if (projectedBalance < 0) {
+      // Surface warning — do NOT block
+      setCurrentBalance(balance)
+      setWarnOpen(true)
+      return
+    }
+
+    // Balance stays non-negative — approve immediately
+    await executeApprove()
+  }
+
+  // ── Approve anyway (from warning modal) ────────────────────────────────────
+  const handleApproveAnyway = async () => {
+    setWarnOpen(false)
+    await executeApprove()
+  }
+
+  // ── Reject handler ─────────────────────────────────────────────────────────
   const handleReject = async () => {
     if (!reason.trim()) return
     setRejecting(true)
@@ -39,10 +115,16 @@ export function ApprovalActions({ expenseId, userRole, onDone }: ApprovalActions
     onDone?.()
   }
 
+  // currentBalance is only null before the first fetch; the modal only opens
+  // after a successful fetch sets it to a number, so this is safe.
+  const projectedBalance = (currentBalance ?? 0) - expenseAmount
+
   return (
     <>
+      {/* ── Action buttons ────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2">
         {error && <p className="text-xs text-red-500">{error}</p>}
+
         <Button
           size="sm"
           variant="danger"
@@ -51,6 +133,7 @@ export function ApprovalActions({ expenseId, userRole, onDone }: ApprovalActions
           <XCircle size={14} />
           Reject
         </Button>
+
         <Button
           size="sm"
           loading={approving}
@@ -61,6 +144,66 @@ export function ApprovalActions({ expenseId, userRole, onDone }: ApprovalActions
         </Button>
       </div>
 
+      {/* ── Negative-balance warning modal (accounting only) ──────────────── */}
+      <Modal
+        open={warnOpen}
+        onClose={() => setWarnOpen(false)}
+        title="Balance Warning"
+      >
+        <div className="space-y-5">
+          {/* Warning header */}
+          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-500" />
+            <p className="text-sm text-amber-800">
+              Approving this expense will result in a{' '}
+              <span className="font-semibold">negative store balance</span>. You may still
+              proceed — negative balances are permitted under the current petty cash policy.
+            </p>
+          </div>
+
+          {/* Balance breakdown */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 divide-y divide-slate-200 text-sm">
+            <div className="flex items-center justify-between px-4 py-2.5">
+              <span className="text-slate-500">Current Balance</span>
+              {/* currentBalance is always set to a number before this modal opens */}
+              <span className="font-medium text-slate-800">{formatINR(currentBalance ?? 0)}</span>
+            </div>
+            <div className="flex items-center justify-between px-4 py-2.5">
+              <span className="text-slate-500">Expense Amount</span>
+              <span className="font-medium text-slate-800">−{formatINR(expenseAmount)}</span>
+            </div>
+            <div className="flex items-center justify-between px-4 py-2.5 bg-white rounded-b-lg">
+              <span className="font-medium text-slate-700">Projected Balance</span>
+              <span className="font-semibold text-red-600">{formatINR(projectedBalance)}</span>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-500">
+            The ledger will reflect this negative balance immediately upon approval. Ensure
+            a replenishment is scheduled if required.
+          </p>
+
+          {/* Actions */}
+          <div className="flex gap-3">
+            <Button
+              variant="ghost"
+              className="flex-1"
+              onClick={() => setWarnOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="flex-1"
+              loading={approving}
+              onClick={handleApproveAnyway}
+            >
+              Approve Anyway
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Rejection modal ───────────────────────────────────────────────── */}
       <Modal
         open={rejectOpen}
         onClose={() => setRejectOpen(false)}

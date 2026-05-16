@@ -187,7 +187,8 @@ export default function StoreManagerReportPage() {
     const [trendData, setTrendData] = useState<{ month: string; amount: number }[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [balance, setBalance] = useState(0);
+    // null = balance fetch failed; number = confirmed ledger value (0 or negative are valid)
+    const [balance, setBalance] = useState<number | null>(null);
 
     // Filters
     const [timeRange, setTimeRange] = useState<TimeRange>("this_month");
@@ -421,9 +422,13 @@ export default function StoreManagerReportPage() {
                 <Card className="max-w-sm rounded-xl border border-slate-200 shadow-sm">
                     <div className="p-5">
                         <p className="text-sm text-slate-500 font-medium">Available Cash</p>
-                        <h2 className="text-3xl font-bold text-slate-800 mt-2">
-                            {formatCurrency(balance)}
-                        </h2>
+                        {balance !== null ? (
+                            <h2 className={`text-3xl font-bold mt-2 ${balance < 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                                {formatCurrency(balance)}
+                            </h2>
+                        ) : (
+                            <p className="text-base font-medium text-slate-400 italic mt-2">Unavailable</p>
+                        )}
                     </div>
                 </Card>
             </div>

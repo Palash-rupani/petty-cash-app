@@ -57,9 +57,9 @@ export async function POST(request: Request) {
   }
 
   const now = new Date()
-  const expenseMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-    .toISOString()
-    .split('T')[0]
+
+  const expenseMonth =
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
 
   const { data, error } = await supabase
     .from('expenses')

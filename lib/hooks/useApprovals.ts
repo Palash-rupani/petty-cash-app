@@ -11,6 +11,7 @@ export function useApprovals() {
 
   const supabase = createClient()
 
+  // ── Fetch pending expenses for the current user's role ────────────────────
   const fetchPending = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -20,9 +21,7 @@ export function useApprovals() {
         data: { user: authUser },
       } = await supabase.auth.getUser()
 
-      if (!authUser) {
-        throw new Error('Not authenticated')
-      }
+      if (!authUser) throw new Error('Not authenticated')
 
       const { data: userData } = await supabase
         .from('users')
@@ -31,12 +30,7 @@ export function useApprovals() {
         .single()
 
       const role = userData?.role
-
-      let statusFilter = 'submitted'
-
-      if (role === 'accounting') {
-        statusFilter = 'cluster_approved'
-      }
+      const statusFilter = role === 'accounting' ? 'cluster_approved' : 'submitted'
 
       const { data, error: fetchError } = await supabase
         .from('expenses')
@@ -49,95 +43,95 @@ export function useApprovals() {
         .eq('status', statusFilter)
         .order('created_at', { ascending: true })
 
-      if (fetchError) {
-        throw fetchError
-      }
+      if (fetchError) throw fetchError
 
       setPendingExpenses((data as Expense[]) ?? [])
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to load approvals'
-      )
+      setError(err instanceof Error ? err.message : 'Failed to load approvals')
     } finally {
       setLoading(false)
     }
   }, [])
 
+  // ── Approve expense ────────────────────────────────────────────────────────
   const approveExpense = async (
     expenseId: string,
     role: string,
     remarks?: string
-  ) => {
-    const newStatus =
-      role === 'cluster_manager'
-        ? 'cluster_approved'
-        : 'accounting_approved'
-
-    const approverField =
-      role === 'cluster_manager'
-        ? 'cluster_approved_by'
-        : 'accounting_approved_by'
-
+  ): Promise<{ error: string | null }> => {
     const {
       data: { user },
     } = await supabase.auth.getUser()
 
-    if (!user) {
-      return { error: 'Not authenticated' }
-    }
+    if (!user) return { error: 'Not authenticated' }
 
-    const { error: updateError } = await supabase
+    const isAccounting = role === 'accounting'
+
+    const newStatus = isAccounting ? 'accounting_approved' : 'cluster_approved'
+    const approverField = isAccounting ? 'accounting_approved_by' : 'cluster_approved_by'
+
+    // ── 1. Status-guarded update ───────────────────────────────────────────
+    // Only update rows in the exact expected prior state to prevent
+    // stale or duplicate approvals from succeeding silently.
+    const expectedPriorStatus = isAccounting ? 'cluster_approved' : 'submitted'
+
+    const { data: updatedRows, error: updateError } = await supabase
       .from('expenses')
       .update({
         status: newStatus,
         [approverField]: user.id,
       })
       .eq('id', expenseId)
+      .eq('status', expectedPriorStatus)
+      .select('id, store_id, amount, description')
 
-    if (updateError) {
-      return { error: updateError.message }
+    if (updateError) return { error: updateError.message }
+
+    // No row matched — expense has moved to a different state already
+    if (!updatedRows || updatedRows.length === 0) {
+      return { error: 'Expense is no longer eligible for approval' }
     }
 
-    // Create ledger debit transaction
-    if (newStatus === 'accounting_approved') {
-      const { data: expenseData } = await supabase
-        .from('expenses')
-        .select('id, store_id, amount, description')
-        .eq('id', expenseId)
-        .single()
+    const expense = updatedRows[0]
 
-      if (expenseData) {
-        // Prevent duplicate deductions
-        const { data: existingTxn } = await supabase
-          .from('cash_transactions')
-          .select('id')
-          .eq('reference_expense_id', expenseId)
-          .maybeSingle()
+    // ── 2. Ledger debit (accounting approval only) ─────────────────────────
+    // Directly attempt the insert and rely on the UNIQUE constraint on
+    // cash_transactions(reference_expense_id) for idempotency.
+    // No pre-check select — that pattern is race-condition unsafe.
+    if (isAccounting) {
+      const { error: ledgerError } = await supabase
+        .from('cash_transactions')
+        .insert({
+          store_id: expense.store_id,
+          created_by: user.id,
+          type: 'debit',
+          amount: expense.amount,
+          remarks: `Approved expense: ${expense.description ?? 'Expense deduction'}`,
+          reference_expense_id: expenseId,
+        })
 
-        if (!existingTxn) {
-          await supabase.from('cash_transactions').insert({
-            store_id: expenseData.store_id,
-            created_by: user.id,
-            type: 'debit',
-            amount: expenseData.amount,
-            remarks: `Approved expense: ${expenseData.description ?? 'Expense deduction'
-              }`,
-            reference_expense_id: expenseId,
-          })
+      if (ledgerError) {
+        if (ledgerError.code === '23505') {
+          // Duplicate — constraint caught a concurrent insert.
+          // Debit already recorded; treat as idempotent success.
+          console.warn(
+            `[useApprovals] Duplicate ledger debit suppressed for expense ${expenseId} — already recorded.`
+          )
+        } else {
+          // Genuine ledger failure — surface the error and halt.
+          // The expense status update has already committed; the caller
+          // should handle this edge case (e.g. alert finance ops).
+          return { error: `Ledger write failed: ${ledgerError.message}` }
         }
       }
     }
 
-    // Audit log
+    // ── 3. Audit log ───────────────────────────────────────────────────────
     await supabase.from('audit_logs').insert({
       expense_id: expenseId,
       action: newStatus,
       performed_by: user.id,
-      remarks:
-        remarks ??
-        `Approved by ${role.replace('_', ' ')}`,
+      remarks: remarks ?? `Approved by ${role.replace('_', ' ')}`,
     })
 
     await fetchPending()
@@ -145,34 +139,34 @@ export function useApprovals() {
     return { error: null }
   }
 
+  // ── Reject expense ─────────────────────────────────────────────────────────
   const rejectExpense = async (
     expenseId: string,
     role: string,
     rejectionReason: string
-  ) => {
-    const newStatus =
-      role === 'cluster_manager'
-        ? 'cluster_rejected'
-        : 'accounting_rejected'
-
+  ): Promise<{ error: string | null }> => {
     const {
       data: { user },
     } = await supabase.auth.getUser()
 
-    if (!user) {
-      return { error: 'Not authenticated' }
-    }
+    if (!user) return { error: 'Not authenticated' }
 
-    const { error: updateError } = await supabase
+    const newStatus =
+      role === 'cluster_manager' ? 'cluster_rejected' : 'accounting_rejected'
+
+    const { data: updatedRows, error: updateError } = await supabase
       .from('expenses')
       .update({
         status: newStatus,
         rejection_reason: rejectionReason,
       })
       .eq('id', expenseId)
+      .select('id')
 
-    if (updateError) {
-      return { error: updateError.message }
+    if (updateError) return { error: updateError.message }
+
+    if (!updatedRows || updatedRows.length === 0) {
+      return { error: 'Expense could not be rejected — it may have already been actioned.' }
     }
 
     await supabase.from('audit_logs').insert({
