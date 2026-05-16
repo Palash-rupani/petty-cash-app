@@ -2,27 +2,40 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { getStoreBalance } from '@/lib/utils/getStoreBalance'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { TrendingUp, Clock, CheckCircle, AlertTriangle } from 'lucide-react'
+import { getCashHealth, CASH_HEALTH_CONFIG } from '@/lib/finance/getCashHealth'
+import { getRefillRecommendation } from '@/lib/finance/getRefillRecommendation'
+import {
+  Wallet, Target, ArrowUpCircle, Clock,
+  Store, ShieldAlert, TrendingUp,
+} from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/Card'
 import type { User } from '@/types'
+
+// ─── Shared primitives ────────────────────────────────────────────────────────
 
 interface StatCardProps {
   title: string
   value: string
   subtitle?: string
   icon: React.ReactNode
-  color: string
+  /** Background colour of the icon container, e.g. "bg-indigo-50" */
+  iconBg: string
+  /** Optional override for the value text colour */
+  valueColor?: string
 }
 
-function StatCard({ title, value, subtitle, icon, color }: StatCardProps) {
+function StatCard({ title, value, subtitle, icon, iconBg, valueColor }: StatCardProps) {
   return (
     <Card>
       <CardContent className="flex items-start gap-4 py-5">
-        <div className={`p-2.5 rounded-lg ${color}`}>{icon}</div>
+        <div className={`p-2.5 rounded-lg shrink-0 ${iconBg}`}>{icon}</div>
         <div className="min-w-0">
           <p className="text-sm text-slate-500 font-medium">{title}</p>
-          <p className="text-2xl font-bold text-slate-800 mt-0.5">{value}</p>
+          <p className={`text-2xl font-bold mt-0.5 tabular-nums ${valueColor ?? 'text-slate-800'}`}>
+            {value}
+          </p>
           {subtitle && <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>}
         </div>
       </CardContent>
@@ -30,349 +43,401 @@ function StatCard({ title, value, subtitle, icon, color }: StatCardProps) {
   )
 }
 
+function SkeletonCards({ count }: { count: number }) {
+  return (
+    <div className={`grid grid-cols-2 sm:grid-cols-${count} gap-4 animate-pulse`}>
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="h-24 bg-slate-100 rounded-xl" />
+      ))}
+    </div>
+  )
+}
+
+// ─── Cash Health Badge ────────────────────────────────────────────────────────
+
+function CashHealthBadge({ balance, targetFloat }: { balance: number; targetFloat: number }) {
+  const health = getCashHealth(balance, targetFloat)
+  const cfg = CASH_HEALTH_CONFIG[health]
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${cfg.bg} ${cfg.color} ${cfg.border}`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  )
+}
+
+// ─── Ledger helper — shared by Cluster and Accounting sections ────────────────
+//
+// getStoreBalance() makes one Supabase round-trip per store, which is an N+1
+// problem for multi-store views. Instead, we fetch all transactions for a set
+// of store IDs in a single query and compute per-store balances client-side,
+// mirroring the same formula as getStoreBalance().
+
+function computeBalanceMap(
+  txns: { store_id: string; type: string; amount: number | string }[]
+): Record<string, number> {
+  const map: Record<string, number> = {}
+  for (const t of txns) {
+    const delta =
+      t.type === 'credit' || t.type === 'adjustment'
+        ? Number(t.amount)
+        : -Number(t.amount)
+    map[t.store_id] = (map[t.store_id] ?? 0) + delta
+  }
+  return map
+}
+
+// ─── Store Manager ────────────────────────────────────────────────────────────
+
 interface StoreManagerStatsProps {
   user: User
 }
 
 function StoreManagerStats({ user }: StoreManagerStatsProps) {
-  const [stats, setStats] = useState({
-    monthlySpend: 0,
-    monthlyLimit: 10000,
-    pendingCount: 0,
-    approvedCount: 0,
-  })
   const supabase = createClient()
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      const now = new Date()
-      // Build YYYY-MM-01 directly from local date parts.
-      // Never use new Date(y,m,d).toISOString().split('T')[0] — in IST (UTC+5:30)
-      // local midnight converts to the previous UTC day, corrupting the DATE filter.
-      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+  // null = fetch failed; number = confirmed ledger value (0 and negatives are valid)
+  const [balance, setBalance] = useState<number | null>(null)
+  const [targetFloat, setTargetFloat] = useState(0)
+  const [pendingCount, setPendingCount] = useState(0)
+  const [loading, setLoading] = useState(true)
 
-      const [expensesRes, storeRes] = await Promise.all([
-        supabase
-          .from('expenses')
-          .select('amount, status')
-          .eq('store_id', user.store_id ?? '')
-          .gte('expense_month', monthStart),
+  useEffect(() => {
+    if (!user.store_id) return
+
+    async function load() {
+      setLoading(true)
+      const [bal, storeRes, expRes] = await Promise.all([
+        getStoreBalance(user.store_id!),
         supabase
           .from('stores')
           .select('monthly_limit')
-          .eq('id', user.store_id ?? '')
+          .eq('id', user.store_id!)
           .single(),
+        supabase
+          .from('expenses')
+          .select('id')
+          .eq('store_id', user.store_id!)
+          // submitted = awaiting cluster; cluster_approved = awaiting accounting
+          .in('status', ['submitted', 'cluster_approved']),
       ])
 
-      const expenses = expensesRes.data ?? []
-      const excluded = ['draft', 'cluster_rejected', 'accounting_rejected']
-      const totalSpend = expenses
-        .filter((e) => !excluded.includes(e.status))
-        .reduce((sum, e) => sum + Number(e.amount), 0)
-      const pending = expenses.filter((e) => e.status === 'submitted').length
-      const approved = expenses.filter((e) =>
-        ['accounting_approved', 'synced_to_tally'].includes(e.status)
-      ).length
-
-      setStats({
-        monthlySpend: totalSpend,
-        monthlyLimit: storeRes.data?.monthly_limit ?? 10000,
-        pendingCount: pending,
-        approvedCount: approved,
-      })
+      setBalance(bal)
+      setTargetFloat(storeRes.data?.monthly_limit ?? 0)
+      setPendingCount((expRes.data ?? []).length)
+      setLoading(false)
     }
-    if (user.store_id) fetchStats()
+
+    load()
   }, [user.store_id])
 
-  const pct = Math.min(100, (stats.monthlySpend / stats.monthlyLimit) * 100)
-  const overLimit = stats.monthlySpend > stats.monthlyLimit
+  if (loading) return <SkeletonCards count={4} />
+
+  const topUp = balance !== null ? getRefillRecommendation(balance, targetFloat) : null
+  const isNegative = balance !== null && balance < 0
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {/* 1. Available Cash — ledger-derived */}
         <StatCard
-          title="Monthly Spend"
-          value={formatCurrency(stats.monthlySpend)}
-          subtitle={`Limit: ${formatCurrency(stats.monthlyLimit)}`}
-          icon={<TrendingUp size={18} className="text-indigo-600" />}
-          color="bg-indigo-50"
+          title="Available Cash"
+          value={balance !== null ? formatCurrency(balance) : '—'}
+          subtitle={isNegative ? 'Negative balance' : 'Current ledger balance'}
+          icon={
+            <Wallet
+              size={18}
+              className={isNegative ? 'text-red-600' : 'text-indigo-600'}
+            />
+          }
+          iconBg={isNegative ? 'bg-red-50' : 'bg-indigo-50'}
+          valueColor={isNegative ? 'text-red-600' : undefined}
         />
+
+        {/* 2. Target Float — operational cash goal, not a spending cap */}
         <StatCard
-          title="Pending Approval"
-          value={String(stats.pendingCount)}
-          subtitle="Awaiting cluster review"
+          title="Target Float"
+          value={formatCurrency(targetFloat)}
+          subtitle="Ideal cash on hand"
+          icon={<Target size={18} className="text-slate-500" />}
+          iconBg="bg-slate-100"
+        />
+
+        {/* 3. Top-Up Needed — how far below the target float we are */}
+        <StatCard
+          title="Top-Up Needed"
+          value={topUp !== null ? formatCurrency(topUp) : '—'}
+          subtitle={topUp === 0 ? 'Float is sufficient' : 'Recommended refill'}
+          icon={
+            <ArrowUpCircle
+              size={18}
+              className={topUp ? 'text-amber-600' : 'text-emerald-600'}
+            />
+          }
+          iconBg={topUp ? 'bg-amber-50' : 'bg-emerald-50'}
+        />
+
+        {/* 4. Pending Approvals — in-flight across all approval stages */}
+        <StatCard
+          title="Pending Approvals"
+          value={String(pendingCount)}
+          subtitle="Submitted & in review"
           icon={<Clock size={18} className="text-amber-600" />}
-          color="bg-amber-50"
-        />
-        <StatCard
-          title="Approved This Month"
-          value={String(stats.approvedCount)}
-          subtitle="Fully approved expenses"
-          icon={<CheckCircle size={18} className="text-green-600" />}
-          color="bg-green-50"
+          iconBg="bg-amber-50"
         />
       </div>
 
-      {/* Progress bar */}
-      <Card>
-        <CardContent className="py-5">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-slate-700">Monthly Budget Usage</span>
-            <span className={`text-sm font-semibold ${overLimit ? 'text-red-600' : 'text-slate-600'}`}>
-              {pct.toFixed(1)}%
-            </span>
-          </div>
-          <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-            <div
-              className={`h-3 rounded-full transition-all duration-500 ${
-                overLimit ? 'bg-red-500' : pct > 80 ? 'bg-amber-500' : 'bg-indigo-600'
-              }`}
-              style={{ width: `${Math.min(pct, 100)}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-xs text-slate-400 mt-1.5">
-            <span>{formatCurrency(stats.monthlySpend)} spent</span>
-            <span>{formatCurrency(stats.monthlyLimit)} limit</span>
-          </div>
-          {overLimit && (
-            <div className="flex items-center gap-1.5 mt-2 text-red-600 text-xs">
-              <AlertTriangle size={12} />
-              Over monthly limit — expenses can still be submitted for accounting review
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Cash health indicator — only shown once balance is confirmed */}
+      {balance !== null && (
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <span>Cash Health:</span>
+          <CashHealthBadge balance={balance} targetFloat={targetFloat} />
+        </div>
+      )}
     </div>
   )
 }
+
+// ─── Cluster Manager ──────────────────────────────────────────────────────────
 
 interface ClusterManagerStatsProps {
   user: User
 }
 
 function ClusterManagerStats({ user }: ClusterManagerStatsProps) {
-  const [data, setData] = useState<{ store: string; spend: number; pending: number }[]>([])
-  const [pendingCount, setPendingCount] = useState(0)
   const supabase = createClient()
 
+  const [storeCount, setStoreCount] = useState(0)
+  const [pendingCount, setPendingCount] = useState(0)
+  const [storesAtRisk, setStoresAtRisk] = useState(0)
+  const [totalRefillNeeded, setTotalRefillNeeded] = useState(0)
+  const [loading, setLoading] = useState(true)
+
   useEffect(() => {
-    const fetchStats = async () => {
+    if (!user.cluster_id) return
+
+    async function load() {
+      setLoading(true)
+
       const { data: stores } = await supabase
         .from('stores')
-        .select('id, name')
-        .eq('cluster_id', user.cluster_id ?? '')
+        .select('id, monthly_limit')
+        .eq('cluster_id', user.cluster_id!)
 
-      if (!stores) return
-
-      const now = new Date()
-      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+      if (!stores || stores.length === 0) {
+        setLoading(false)
+        return
+      }
 
       const storeIds = stores.map((s) => s.id)
-      const { data: expenses } = await supabase
-        .from('expenses')
-        .select('store_id, amount, status')
-        .in('store_id', storeIds)
-        .gte('expense_month', monthStart)
 
-      const pending = (expenses ?? []).filter((e) => e.status === 'submitted').length
-      setPendingCount(pending)
+      // Single round-trip for all ledger data + pending queue
+      const [txRes, expRes] = await Promise.all([
+        supabase
+          .from('cash_transactions')
+          .select('store_id, type, amount')
+          .in('store_id', storeIds),
+        supabase
+          .from('expenses')
+          .select('id')
+          .in('store_id', storeIds)
+          .eq('status', 'submitted'), // only what cluster manager must act on
+      ])
 
-      const storeMap = stores.map((store) => ({
-        store: store.name,
-        spend: (expenses ?? [])
-          .filter((e) => e.store_id === store.id)
-          .reduce((sum, e) => sum + Number(e.amount), 0),
-        pending: (expenses ?? []).filter(
-          (e) => e.store_id === store.id && e.status === 'submitted'
-        ).length,
-      }))
-      setData(storeMap)
+      const balanceMap = computeBalanceMap(txRes.data ?? [])
+
+      let atRisk = 0
+      let refillTotal = 0
+
+      for (const s of stores) {
+        const bal = balanceMap[s.id] ?? 0
+        const tf = Number(s.monthly_limit) || 0
+        if (getCashHealth(bal, tf) !== 'healthy') atRisk++
+        refillTotal += getRefillRecommendation(bal, tf)
+      }
+
+      setStoreCount(stores.length)
+      setPendingCount((expRes.data ?? []).length)
+      setStoresAtRisk(atRisk)
+      setTotalRefillNeeded(refillTotal)
+      setLoading(false)
     }
-    if (user.cluster_id) fetchStats()
+
+    load()
   }, [user.cluster_id])
 
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <StatCard
-          title="Pending Approvals"
-          value={String(pendingCount)}
-          subtitle="Expenses awaiting your review"
-          icon={<Clock size={18} className="text-amber-600" />}
-          color="bg-amber-50"
-        />
-        <StatCard
-          title="Stores in Cluster"
-          value={String(data.length)}
-          subtitle="Active stores"
-          icon={<TrendingUp size={18} className="text-indigo-600" />}
-          color="bg-indigo-50"
-        />
-      </div>
+  if (loading) return <SkeletonCards count={4} />
 
-      <Card>
-        <div className="px-6 py-4 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-800">Store-wise Spend This Month</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-100">
-                <th className="text-left text-xs font-medium text-slate-500 px-6 py-3">Store</th>
-                <th className="text-right text-xs font-medium text-slate-500 px-6 py-3">Monthly Spend</th>
-                <th className="text-right text-xs font-medium text-slate-500 px-6 py-3">Pending</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((row) => (
-                <tr key={row.store} className="border-b border-slate-50 hover:bg-slate-50">
-                  <td className="px-6 py-3 text-sm text-slate-700 font-medium">{row.store}</td>
-                  <td className="px-6 py-3 text-sm text-slate-600 text-right">{formatCurrency(row.spend)}</td>
-                  <td className="px-6 py-3 text-right">
-                    {row.pending > 0 ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
-                        {row.pending}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-slate-400">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {data.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-6 py-8 text-center text-sm text-slate-400">
-                    No stores found in your cluster
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {/* 1. Pending approvals — submitted expenses awaiting cluster action */}
+      <StatCard
+        title="Pending Approvals"
+        value={String(pendingCount)}
+        subtitle="Awaiting your review"
+        icon={<Clock size={18} className="text-amber-600" />}
+        iconBg="bg-amber-50"
+      />
+
+      {/* 2. Cluster size */}
+      <StatCard
+        title="Stores in Cluster"
+        value={String(storeCount)}
+        subtitle="Active locations"
+        icon={<Store size={18} className="text-indigo-600" />}
+        iconBg="bg-indigo-50"
+      />
+
+      {/* 3. Stores at risk — low or negative balance */}
+      <StatCard
+        title="Stores at Risk"
+        value={String(storesAtRisk)}
+        subtitle="Low or negative balance"
+        icon={
+          <ShieldAlert
+            size={18}
+            className={storesAtRisk > 0 ? 'text-red-600' : 'text-emerald-600'}
+          />
+        }
+        iconBg={storesAtRisk > 0 ? 'bg-red-50' : 'bg-emerald-50'}
+        valueColor={storesAtRisk > 0 ? 'text-red-600' : 'text-emerald-700'}
+      />
+
+      {/* 4. Total refill needed across all stores in cluster */}
+      <StatCard
+        title="Refill Required"
+        value={formatCurrency(totalRefillNeeded)}
+        subtitle="Across all stores"
+        icon={
+          <ArrowUpCircle
+            size={18}
+            className={totalRefillNeeded > 0 ? 'text-amber-600' : 'text-emerald-600'}
+          />
+        }
+        iconBg={totalRefillNeeded > 0 ? 'bg-amber-50' : 'bg-emerald-50'}
+      />
     </div>
   )
 }
 
+// ─── Accounting ───────────────────────────────────────────────────────────────
+
 interface AccountingStatsProps {
+  // user is accepted for API consistency even though accounting cards are org-wide
   user: User
 }
 
 function AccountingStats({ user: _user }: AccountingStatsProps) {
-  const [stats, setStats] = useState({
-    totalAmount: 0,
-    submitted: 0,
-    clusterApproved: 0,
-    accountingApproved: 0,
-  })
-  const [storeBreakdown, setStoreBreakdown] = useState<
-    { store: string; total: number; approved: number; pending: number }[]
-  >([])
   const supabase = createClient()
 
+  // null = stores fetch failed; number = confirmed aggregate (may be 0 or negative)
+  const [totalBalance, setTotalBalance] = useState<number | null>(null)
+  const [totalRefillNeeded, setTotalRefillNeeded] = useState(0)
+  const [criticalStores, setCriticalStores] = useState(0)   // negative balance
+  const [pendingQueue, setPendingQueue] = useState(0)        // awaiting accounting approval
+  const [loading, setLoading] = useState(true)
+
   useEffect(() => {
-    const fetchStats = async () => {
-      const now = new Date()
-      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+    async function load() {
+      setLoading(true)
 
-      const { data: expenses } = await supabase
-        .from('expenses')
-        .select('amount, status, store_id, store:stores(name)')
-        .gte('expense_month', monthStart)
+      const [storeRes, txRes, expRes] = await Promise.all([
+        supabase.from('stores').select('id, monthly_limit'),
+        supabase.from('cash_transactions').select('store_id, type, amount'),
+        supabase
+          .from('expenses')
+          .select('id')
+          .eq('status', 'cluster_approved'), // only what accounting must action
+      ])
 
-      const all = expenses ?? []
-      const totalAmount = all.reduce((s, e) => s + Number(e.amount), 0)
-      const submitted = all.filter((e) => e.status === 'submitted').length
-      const clusterApproved = all.filter((e) => e.status === 'cluster_approved').length
-      const accountingApproved = all.filter((e) =>
-        ['accounting_approved', 'synced_to_tally'].includes(e.status)
-      ).length
+      const stores = storeRes.data ?? []
+      const balanceMap = computeBalanceMap(txRes.data ?? [])
 
-      setStats({ totalAmount, submitted, clusterApproved, accountingApproved })
+      let runningBalance = 0
+      let refillTotal = 0
+      let critical = 0
 
-      // Store breakdown
-      const storeMap: Record<string, { store: string; total: number; approved: number; pending: number }> = {}
-      for (const e of all) {
-        const storeName = ((e.store as unknown) as { name: string } | null)?.name ?? e.store_id
-        if (!storeMap[e.store_id]) {
-          storeMap[e.store_id] = { store: storeName, total: 0, approved: 0, pending: 0 }
-        }
-        storeMap[e.store_id].total += Number(e.amount)
-        if (['accounting_approved', 'synced_to_tally'].includes(e.status)) {
-          storeMap[e.store_id].approved += Number(e.amount)
-        }
-        if (['submitted', 'cluster_approved'].includes(e.status)) {
-          storeMap[e.store_id].pending += Number(e.amount)
-        }
+      for (const s of stores) {
+        const bal = balanceMap[s.id] ?? 0
+        const tf = Number(s.monthly_limit) || 0
+        runningBalance += bal
+        refillTotal += getRefillRecommendation(bal, tf)
+        if (bal < 0) critical++
       }
-      setStoreBreakdown(Object.values(storeMap))
+
+      // If the stores query itself errored, keep totalBalance null so the UI
+      // shows "—" rather than a misleading ₹0.
+      setTotalBalance(storeRes.error ? null : runningBalance)
+      setTotalRefillNeeded(refillTotal)
+      setCriticalStores(critical)
+      setPendingQueue((expRes.data ?? []).length)
+      setLoading(false)
     }
-    fetchStats()
+
+    load()
   }, [])
 
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard
-          title="Total This Month"
-          value={formatCurrency(stats.totalAmount)}
-          icon={<TrendingUp size={18} className="text-indigo-600" />}
-          color="bg-indigo-50"
-        />
-        <StatCard
-          title="Awaiting Cluster"
-          value={String(stats.submitted)}
-          icon={<Clock size={18} className="text-amber-600" />}
-          color="bg-amber-50"
-        />
-        <StatCard
-          title="Awaiting Accounting"
-          value={String(stats.clusterApproved)}
-          icon={<AlertTriangle size={18} className="text-orange-600" />}
-          color="bg-orange-50"
-        />
-        <StatCard
-          title="Fully Approved"
-          value={String(stats.accountingApproved)}
-          icon={<CheckCircle size={18} className="text-green-600" />}
-          color="bg-green-50"
-        />
-      </div>
+  if (loading) return <SkeletonCards count={4} />
 
-      <Card>
-        <div className="px-6 py-4 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-800">Store-wise Breakdown</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-100">
-                <th className="text-left text-xs font-medium text-slate-500 px-6 py-3">Store</th>
-                <th className="text-right text-xs font-medium text-slate-500 px-6 py-3">Total</th>
-                <th className="text-right text-xs font-medium text-slate-500 px-6 py-3">Approved</th>
-                <th className="text-right text-xs font-medium text-slate-500 px-6 py-3">Pending</th>
-              </tr>
-            </thead>
-            <tbody>
-              {storeBreakdown.map((row) => (
-                <tr key={row.store} className="border-b border-slate-50 hover:bg-slate-50">
-                  <td className="px-6 py-3 text-sm text-slate-700 font-medium">{row.store}</td>
-                  <td className="px-6 py-3 text-sm text-slate-600 text-right">{formatCurrency(row.total)}</td>
-                  <td className="px-6 py-3 text-sm text-green-600 font-medium text-right">{formatCurrency(row.approved)}</td>
-                  <td className="px-6 py-3 text-sm text-amber-600 text-right">{formatCurrency(row.pending)}</td>
-                </tr>
-              ))}
-              {storeBreakdown.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-6 py-8 text-center text-sm text-slate-400">
-                    No expense data for this month
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+  const balanceNegative = totalBalance !== null && totalBalance < 0
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {/* 1. Total treasury balance — sum of all store ledger balances */}
+      <StatCard
+        title="Total Treasury Balance"
+        value={totalBalance !== null ? formatCurrency(totalBalance) : '—'}
+        subtitle="Across all stores"
+        icon={
+          <Wallet
+            size={18}
+            className={balanceNegative ? 'text-red-600' : 'text-indigo-600'}
+          />
+        }
+        iconBg={balanceNegative ? 'bg-red-50' : 'bg-indigo-50'}
+        valueColor={balanceNegative ? 'text-red-600' : undefined}
+      />
+
+      {/* 2. Total refill requirement to bring all stores to their target floats */}
+      <StatCard
+        title="Refill Requirement"
+        value={formatCurrency(totalRefillNeeded)}
+        subtitle="To reach all target floats"
+        icon={
+          <ArrowUpCircle
+            size={18}
+            className={totalRefillNeeded > 0 ? 'text-amber-600' : 'text-emerald-600'}
+          />
+        }
+        iconBg={totalRefillNeeded > 0 ? 'bg-amber-50' : 'bg-emerald-50'}
+      />
+
+      {/* 3. Accounting approval queue — cluster-approved, awaiting final sign-off */}
+      <StatCard
+        title="Pending Queue"
+        value={String(pendingQueue)}
+        subtitle="Cluster-approved, awaiting you"
+        icon={<TrendingUp size={18} className="text-orange-600" />}
+        iconBg="bg-orange-50"
+        valueColor={pendingQueue > 0 ? 'text-orange-700' : undefined}
+      />
+
+      {/* 4. Stores in a negative balance state — most urgent treasury signal */}
+      <StatCard
+        title="Critical Stores"
+        value={String(criticalStores)}
+        subtitle="Negative balance"
+        icon={
+          <ShieldAlert
+            size={18}
+            className={criticalStores > 0 ? 'text-red-600' : 'text-emerald-600'}
+          />
+        }
+        iconBg={criticalStores > 0 ? 'bg-red-50' : 'bg-emerald-50'}
+        valueColor={criticalStores > 0 ? 'text-red-600' : 'text-emerald-700'}
+      />
     </div>
   )
 }
