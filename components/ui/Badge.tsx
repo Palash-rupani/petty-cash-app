@@ -13,6 +13,8 @@ const statusConfig: Record<ExpenseStatus, { label: string; className: string }> 
   cluster_rejected: { label: 'Cluster Rejected', className: 'bg-red-100 text-red-700' },
   accounting_approved: { label: 'Approved', className: 'bg-green-100 text-green-700' },
   accounting_rejected: { label: 'Rejected', className: 'bg-red-100 text-red-700' },
+  approved: { label: 'Approved', className: 'bg-green-100 text-green-700' },
+  rejected: { label: 'Rejected', className: 'bg-red-100 text-red-700' },
   synced_to_tally: { label: 'Synced to Tally', className: 'bg-emerald-100 text-emerald-700' },
   tally_sync_failed: { label: 'Tally Sync Failed', className: 'bg-orange-100 text-orange-700' },
 }

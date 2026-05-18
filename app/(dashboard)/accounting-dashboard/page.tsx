@@ -9,6 +9,7 @@ import { formatCurrency } from "@/lib/utils/formatCurrency";
 import { getClusterBalances } from "@/lib/finance/getClusterBalances";
 import { getCashHealth } from "@/lib/finance/getCashHealth";
 import { getRefillRecommendation } from "@/lib/finance/getRefillRecommendation";
+import { getClusterName } from "@/lib/utils/getClusterName";
 import { Card, CardHeader, CardContent } from "@/components/ui/Card";
 import { DashboardFilterBar } from "@/components/dashboard/DashboardFilterBar";
 import { useDashboardFilters, DateRangeFilter } from "@/lib/hooks/useDashboardFilters";
@@ -30,7 +31,7 @@ interface StoreRow {
     name: string;
     monthly_limit: number;
     cluster_id: string;
-    clusters: { name: string } | null;
+    clusters: { id: string; name: string } | null;
 }
 
 interface Expense {
@@ -54,10 +55,11 @@ interface ClusterTreasuryPosition {
     pendingExposure: number;
 }
 
+import { PENDING_STATUSES } from "@/lib/constants/expenseStatuses";
+
 // ─── Status Groups ────────────────────────────────────────────────────────────
 
 const APPROVED_STATUSES = ["accounting_approved", "synced_to_tally"];
-const PENDING_STATUSES = ["draft", "submitted", "cluster_approved"];
 const REJECTED_STATUSES = ["cluster_rejected", "accounting_rejected", "tally_sync_failed"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -204,7 +206,7 @@ export default function EnterpriseTreasuryDashboard() {
                 // 1. Fetch stores
                 const { data: storeData, error: storeErr } = await supabase
                     .from("stores")
-                    .select("id, name, monthly_limit, cluster_id, clusters(name)");
+                    .select("id, name, monthly_limit, cluster_id, clusters(id, name)");
 
                 if (storeErr) throw storeErr;
                 const storeRows = (storeData ?? []) as unknown as StoreRow[];
@@ -263,7 +265,7 @@ export default function EnterpriseTreasuryDashboard() {
             if (!map[cid]) {
                 map[cid] = {
                     clusterId: cid,
-                    name: s.clusters?.name ?? "Unassigned",
+                    name: getClusterName(s.clusters),
                     balance: 0,
                     targetFloat: 0,
                     refillNeed: 0,
@@ -287,7 +289,7 @@ export default function EnterpriseTreasuryDashboard() {
 
         // Add pending exposure from all expenses
         expenses.forEach((e) => {
-            if (PENDING_STATUSES.includes(e.status)) {
+            if ((PENDING_STATUSES as readonly string[]).includes(e.status)) {
                 const store = stores.find((s) => s.id === e.store_id);
                 if (store && store.cluster_id && map[store.cluster_id]) {
                     map[store.cluster_id].pendingExposure += e.amount;
@@ -331,7 +333,7 @@ export default function EnterpriseTreasuryDashboard() {
     }, [expenses, activeStoreIds, filters.dateRange]);
 
     const filteredApproved = useMemo(() => filteredExpenses.filter((e) => APPROVED_STATUSES.includes(e.status)), [filteredExpenses]);
-    const filteredPending = useMemo(() => filteredExpenses.filter((e) => PENDING_STATUSES.includes(e.status)), [filteredExpenses]);
+    const filteredPending = useMemo(() => filteredExpenses.filter((e) => (PENDING_STATUSES as readonly string[]).includes(e.status)), [filteredExpenses]);
     const filteredRejected = useMemo(() => filteredExpenses.filter((e) => REJECTED_STATUSES.includes(e.status)), [filteredExpenses]);
 
     // Analytics: Burn Trend
@@ -357,7 +359,7 @@ export default function EnterpriseTreasuryDashboard() {
         const map: Record<string, number> = {};
         filteredApproved.forEach((e) => {
             const store = stores.find((s) => s.id === e.store_id);
-            const cName = store?.clusters?.name ?? "Unknown";
+            const cName = getClusterName(store?.clusters);
             map[cName] = (map[cName] ?? 0) + e.amount;
         });
         return Object.entries(map)

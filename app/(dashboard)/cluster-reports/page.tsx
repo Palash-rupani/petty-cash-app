@@ -68,10 +68,11 @@ interface StoreTreasuryPosition {
     oldestSubmittedAt: number | null;
 }
 
+import { PENDING_STATUSES } from "@/lib/constants/expenseStatuses";
+
 // ─── Status Groups ────────────────────────────────────────────────────────────
 
 const APPROVED_STATUSES = ["accounting_approved", "synced_to_tally"];
-const PENDING_STATUSES = ["draft", "submitted", "cluster_approved"];
 const REJECTED_STATUSES = ["cluster_rejected", "accounting_rejected", "tally_sync_failed"];
 const SUBMITTED_STATUSES = ["submitted"];
 const ACCT_PENDING = ["cluster_approved"];
@@ -402,7 +403,7 @@ export default function ClusterReportsPage() {
     // ── Derived: expense buckets ──────────────────────────────────────────────
 
     const approved = useMemo(() => filteredExpenses.filter((e) => APPROVED_STATUSES.includes(e.status)), [filteredExpenses]);
-    const pending = useMemo(() => filteredExpenses.filter((e) => PENDING_STATUSES.includes(e.status)), [filteredExpenses]);
+    const pending = useMemo(() => filteredExpenses.filter((e) => (PENDING_STATUSES as readonly string[]).includes(e.status)), [filteredExpenses]);
     const rejected = useMemo(() => filteredExpenses.filter((e) => REJECTED_STATUSES.includes(e.status)), [filteredExpenses]);
     const submitted = useMemo(() => filteredExpenses.filter((e) => SUBMITTED_STATUSES.includes(e.status)), [filteredExpenses]);
     const acctPend = useMemo(() => filteredExpenses.filter((e) => ACCT_PENDING.includes(e.status)), [filteredExpenses]);
@@ -446,7 +447,7 @@ export default function ClusterReportsPage() {
             if (!pos) return;
             pos.expenseCount++;
             if (APPROVED_STATUSES.includes(e.status)) pos.approved += e.amount;
-            if (PENDING_STATUSES.includes(e.status)) {
+            if ((PENDING_STATUSES as readonly string[]).includes(e.status)) {
                 pos.pendingAmount += e.amount;
                 pos.pendingCount++;
             }
@@ -557,7 +558,7 @@ export default function ClusterReportsPage() {
             }
             map[sid].count++;
             if (APPROVED_STATUSES.includes(e.status)) map[sid].approved += e.amount;
-            if (PENDING_STATUSES.includes(e.status)) map[sid].pending += e.amount;
+            if ((PENDING_STATUSES as readonly string[]).includes(e.status)) map[sid].pending += e.amount;
             if (REJECTED_STATUSES.includes(e.status)) map[sid].rejected += e.amount;
         });
         return Object.values(map).sort((a, b) => b.approved - a.approved);

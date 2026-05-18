@@ -6,7 +6,9 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
+import { PENDING_STATUSES } from '@/lib/constants/expenseStatuses'
 import { exportCSV } from '@/lib/utils/exportCSV'
+import { getClusterName } from '@/lib/utils/getClusterName'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import {
@@ -33,7 +35,7 @@ interface Store {
   name: string
   cluster_id: string
   monthly_limit: number
-  clusters: { name: string } | null
+  clusters: { id: string; name: string } | null
 }
 
 interface Expense {
@@ -312,7 +314,7 @@ export default function ReportsPage() {
         supabase.from('clusters').select('id, name').order('name'),
         supabase
           .from('stores')
-          .select('id, name, cluster_id, monthly_limit, clusters(name)')
+          .select('id, name, cluster_id, monthly_limit, clusters(id, name)')
           .order('name'),
         supabase
           .from('expenses')
@@ -361,7 +363,7 @@ export default function ReportsPage() {
 
       const pendingSpend = storeExpenses
         .filter((e) =>
-          ['submitted', 'cluster_approved', 'draft'].includes(e.status)
+          (PENDING_STATUSES as readonly string[]).includes(e.status)
         )
         .reduce((s, e) => s + Number(e.amount), 0)
 
@@ -378,8 +380,7 @@ export default function ReportsPage() {
       return {
         storeId: store.id,
         storeName: store.name,
-        cluster:
-          (store.clusters as unknown as { name: string } | null)?.name ?? '—',
+        cluster: getClusterName(store.clusters),
         targetFloat,
         currentBalance,
         approvedSpend,

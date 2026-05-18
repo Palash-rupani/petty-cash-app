@@ -75,12 +75,12 @@ interface CreditTransaction {
     remarks: string | null;
 }
 
+import { PENDING_STATUSES, ACTIVE_APPROVAL_STATUSES } from "@/lib/constants/expenseStatuses";
+
 // ─── Status Groups ────────────────────────────────────────────────────────────
 
 const APPROVED_STATUSES = ["accounting_approved", "synced_to_tally"];
-const PENDING_STATUSES = ["draft", "submitted", "cluster_approved"];
 const REJECTED_STATUSES = ["cluster_rejected", "accounting_rejected", "tally_sync_failed"];
-const IN_REVIEW_STATUSES = ["submitted", "cluster_approved"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -365,7 +365,7 @@ export default function StoreManagerReportPage() {
     // ── Derived calculations ─────────────────────────────────────────────────
 
     const approved = useMemo(() => expenses.filter((e) => APPROVED_STATUSES.includes(e.status)), [expenses]);
-    const pending = useMemo(() => expenses.filter((e) => PENDING_STATUSES.includes(e.status)), [expenses]);
+    const pending = useMemo(() => expenses.filter((e) => (PENDING_STATUSES as readonly string[]).includes(e.status)), [expenses]);
     const rejected = useMemo(() => expenses.filter((e) => REJECTED_STATUSES.includes(e.status)), [expenses]);
     const drafts = useMemo(() => expenses.filter((e) => e.status === "draft"), [expenses]);
 
@@ -405,7 +405,7 @@ export default function StoreManagerReportPage() {
     }, [balance, totalPending]);
 
     const pendingApprovalRows = useMemo(
-        () => expenses.filter((e) => IN_REVIEW_STATUSES.includes(e.status)),
+        () => expenses.filter((e) => (ACTIVE_APPROVAL_STATUSES as readonly string[]).includes(e.status)),
         [expenses]
     );
 
