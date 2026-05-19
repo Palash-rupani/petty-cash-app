@@ -24,8 +24,8 @@ export default function ApprovalsPage() {
 
   const queueLabel =
     user.role === 'cluster_manager'
-      ? 'Submitted expenses waiting for your cluster review'
-      : 'Cluster-approved expenses waiting for accounting sign-off'
+      ? 'Submitted expenses awaiting your final approval'
+      : 'Supervisory review — expenses approved by cluster managers'
 
   return (
     <div className="max-w-5xl space-y-4">

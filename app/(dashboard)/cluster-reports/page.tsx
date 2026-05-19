@@ -6,7 +6,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
-import { getClusterBalances } from "@/lib/finance/getClusterBalances";
+import { getClusterAvailableBalances } from "@/lib/finance/getClusterAvailableBalances";
 import { getCashHealth } from "@/lib/finance/getCashHealth";
 import { getRefillRecommendation } from "@/lib/finance/getRefillRecommendation";
 import { Card, CardHeader, CardContent } from "@/components/ui/Card";
@@ -58,7 +58,9 @@ interface StoreTreasuryPosition {
     storeId: string;
     name: string;
     targetFloat: number;
-    balance: number;
+    balance: number;          // actualBalance (credits − debits)
+    reservedAmount: number;   // sum of active treasury_reservations
+    availableBalance: number; // balance − reservedAmount (primary liquidity metric)
     pendingAmount: number;
     pendingCount: number;
     approved: number;
@@ -248,8 +250,10 @@ export default function ClusterReportsPage() {
     const [expenses, setExpenses] = useState<Expense[]>([]);
     const [rawTrendData, setRawTrendData] = useState<{ amount: number, expense_month: string | null, created_at: string, status: string, store_id: string }[]>([]);
     const [treasuryCredits, setTreasuryCredits] = useState<TreasuryCredit[]>([]);
-    // null = not yet fetched; Record<storeId, balance> once loaded
+    // null = not yet fetched; Record<storeId, actualBalance> once loaded
     const [balanceMap, setBalanceMap] = useState<Record<string, number> | null>(null);
+    // Record<storeId, reservedAmount> — sum of active treasury_reservations per store
+    const [reservedMap, setReservedMap] = useState<Record<string, number>>({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -272,7 +276,7 @@ export default function ClusterReportsPage() {
                 const storeIds = rows.map((s) => s.id);
                 if (storeIds.length === 0) { setExpenses([]); setLoading(false); return; }
 
-                // Fetch expenses + ledger balances + recent credits in parallel
+                // Fetch expenses + available balances + recent credits in parallel
                 const [expResult, balances, creditsResult] = await Promise.all([
                     supabase
                         .from("expenses")
@@ -282,7 +286,7 @@ export default function ClusterReportsPage() {
                         )
                         .in("store_id", storeIds)
                         .order("created_at", { ascending: false }),
-                    getClusterBalances(storeIds),
+                    getClusterAvailableBalances(storeIds),
                     supabase
                         .from("cash_transactions")
                         .select("id, store_id, amount, remarks, created_at, stores(name)")
@@ -303,10 +307,15 @@ export default function ClusterReportsPage() {
                 })) as Expense[];
                 setExpenses(normalised);
 
-                // Convert balance array to a lookup map
-                const map: Record<string, number> = {};
-                balances.forEach(({ storeId, balance }) => { map[storeId] = balance; });
-                setBalanceMap(map);
+                // Build actual balance and reservation lookup maps
+                const actualMap: Record<string, number> = {};
+                const resMap: Record<string, number> = {};
+                balances.forEach(({ storeId, actualBalance, reservedAmount }) => {
+                    actualMap[storeId] = actualBalance;
+                    resMap[storeId] = reservedAmount;
+                });
+                setBalanceMap(actualMap);
+                setReservedMap(resMap);
 
                 if (!creditsResult.error) {
                     const storeNameMap: Record<string, string> = {};
@@ -354,17 +363,19 @@ export default function ClusterReportsPage() {
     // ── Apply Filters ─────────────────────────────────────────────────────────
 
     // 1. Current State Filtering (Ignores Date Range)
+    //    Health is evaluated against availableBalance (= actual − reserved)
     const activeStoreIds = useMemo(() => {
         return stores.filter((s) => {
             if (filters.selectedStores.length > 0 && !filters.selectedStores.includes(s.id)) return false;
             if (filters.treasuryHealth.length > 0) {
-                const balance = balanceMap ? balanceMap[s.id] ?? 0 : 0;
-                const health = getCashHealth(balance, s.monthly_limit);
+                const actual = balanceMap ? balanceMap[s.id] ?? 0 : 0;
+                const reserved = reservedMap[s.id] ?? 0;
+                const health = getCashHealth(actual - reserved, s.monthly_limit);
                 if (!filters.treasuryHealth.includes(health)) return false;
             }
             return true;
         }).map((s) => s.id);
-    }, [stores, filters.selectedStores, filters.treasuryHealth, balanceMap]);
+    }, [stores, filters.selectedStores, filters.treasuryHealth, balanceMap, reservedMap]);
 
     // 2. Time-Scoped Analytics Filtering (Respects Date Range & Stores)
     const filteredExpenses = useMemo(() => {
@@ -427,11 +438,15 @@ export default function ClusterReportsPage() {
 
         // Seed from ACTIVE stores only
         stores.filter(s => activeStoreIds.includes(s.id)).forEach((s) => {
+            const actual = balanceMap[s.id] ?? 0;
+            const reserved = reservedMap[s.id] ?? 0;
             posMap[s.id] = {
                 storeId: s.id,
                 name: s.name,
                 targetFloat: s.monthly_limit ?? 0,
-                balance: balanceMap[s.id] ?? 0,
+                balance: actual,
+                reservedAmount: reserved,
+                availableBalance: actual - reserved,
                 pendingAmount: 0,
                 pendingCount: 0,
                 approved: 0,
@@ -460,51 +475,61 @@ export default function ClusterReportsPage() {
             }
         });
 
-        return Object.values(posMap).sort((a, b) => a.balance - b.balance); // worst first
-    }, [stores, activeStoreIds, filteredExpenses, balanceMap]);
+        return Object.values(posMap).sort((a, b) => a.availableBalance - b.availableBalance); // worst first
+    }, [stores, activeStoreIds, filteredExpenses, balanceMap, reservedMap]);
 
     // ── Treasury KPI aggregates ───────────────────────────────────────────────
 
+    // Primary liquidity = sum of available balances (actual − reserved per store)
     const clusterLiquidity = useMemo(
+        () => storeTreasuryPositions.reduce((s, p) => s + p.availableBalance, 0),
+        [storeTreasuryPositions]
+    );
+
+    // Total actual balance — used as denominator for exposure % calculations
+    const totalActualLiquidity = useMemo(
         () => storeTreasuryPositions.reduce((s, p) => s + p.balance, 0),
         [storeTreasuryPositions]
     );
 
+    // Stores where availableBalance health is not "healthy"
     const storesAtRisk = useMemo(
         () => storeTreasuryPositions.filter(
-            (p) => getCashHealth(p.balance, p.targetFloat) !== "healthy"
+            (p) => getCashHealth(p.availableBalance, p.targetFloat) !== "healthy"
         ).length,
         [storeTreasuryPositions]
     );
 
+    // Refill needed is based on availableBalance vs targetFloat
     const totalRefillNeeded = useMemo(
         () => storeTreasuryPositions.reduce(
-            (s, p) => s + getRefillRecommendation(p.balance, p.targetFloat), 0
+            (s, p) => s + getRefillRecommendation(p.availableBalance, p.targetFloat), 0
         ),
         [storeTreasuryPositions]
     );
 
-    // Total pending exposure as % of cluster liquidity
+    // Total pending exposure as % of actual cluster balance
     const pendingExposurePct = useMemo<number | null>(() => {
-        if (clusterLiquidity <= 0) return null;
-        return (totalPending / clusterLiquidity) * 100;
-    }, [totalPending, clusterLiquidity]);
+        if (totalActualLiquidity <= 0) return null;
+        return (totalPending / totalActualLiquidity) * 100;
+    }, [totalPending, totalActualLiquidity]);
 
     // ── Attention flags ───────────────────────────────────────────────────────
 
+    // Negative / low based on availableBalance — the real operational signal
     const negativeStores = useMemo(
-        () => storeTreasuryPositions.filter((p) => p.balance < 0),
+        () => storeTreasuryPositions.filter((p) => p.availableBalance < 0),
         [storeTreasuryPositions]
     );
 
     const lowLiquidityStores = useMemo(
         () => storeTreasuryPositions.filter(
-            (p) => p.balance >= 0 && getCashHealth(p.balance, p.targetFloat) === "low"
+            (p) => p.availableBalance >= 0 && getCashHealth(p.availableBalance, p.targetFloat) === "low"
         ),
         [storeTreasuryPositions]
     );
 
-    // Stores where pending > 50% of balance (only when balance > 0)
+    // Stores where pending (expense-derived) > 50% of actual balance
     const highExposureStores = useMemo(
         () => storeTreasuryPositions.filter(
             (p) => p.balance > 0 && p.pendingAmount / p.balance > 0.5
@@ -662,9 +687,9 @@ export default function ClusterReportsPage() {
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
                 <StatCard
                     icon={<Landmark className="w-4 h-4 text-indigo-600" />} bg="bg-indigo-50"
-                    label="Cluster Liquidity"
+                    label="Available Liquidity"
                     value={formatCurrency(clusterLiquidity)}
-                    sub="Ledger balance, active stores"
+                    sub="Available balance, active stores"
                     subColor={clusterLiquidity < 0 ? "text-red-600" : "text-slate-400"}
                 />
                 <StatCard
@@ -715,8 +740,8 @@ export default function ClusterReportsPage() {
                     sub={formatCurrency(sumAmount(submitted))} subColor="text-blue-600" />
                 <StatCard
                     icon={<CheckCircle2 className="w-4 h-4 text-teal-500" />} bg="bg-teal-50"
-                    label="Cluster Approved" value={String(acctPend.length)}
-                    sub="At accounting" subColor="text-teal-600" />
+                    label="Approved" value={String(acctPend.length)}
+                    sub="Awaiting accounting record" subColor="text-teal-600" />
                 <StatCard
                     icon={<XCircle className="w-4 h-4 text-orange-500" />} bg="bg-orange-50"
                     label="Cluster Rejected" value={String(clRejected.length)}
@@ -752,11 +777,11 @@ export default function ClusterReportsPage() {
                                         <div key={p.storeId} className="flex items-center justify-between px-5 py-3">
                                             <div>
                                                 <p className="text-sm font-medium text-slate-800">{p.name}</p>
-                                                <p className="text-xs text-red-600 mt-0.5">Negative balance</p>
+                                                <p className="text-xs text-red-600 mt-0.5">Negative available balance</p>
                                             </div>
                                             <div className="text-right">
-                                                <p className="text-sm font-bold text-red-600 tabular-nums">{formatCurrency(p.balance)}</p>
-                                                <p className="text-xs text-slate-400 mt-0.5">Refill: {formatCurrency(getRefillRecommendation(p.balance, p.targetFloat))}</p>
+                                                <p className="text-sm font-bold text-red-600 tabular-nums">{formatCurrency(p.availableBalance)}</p>
+                                                <p className="text-xs text-slate-400 mt-0.5">Refill: {formatCurrency(getRefillRecommendation(p.availableBalance, p.targetFloat))}</p>
                                             </div>
                                         </div>
                                     ))}
@@ -764,11 +789,11 @@ export default function ClusterReportsPage() {
                                         <div key={p.storeId} className="flex items-center justify-between px-5 py-3">
                                             <div>
                                                 <p className="text-sm font-medium text-slate-800">{p.name}</p>
-                                                <p className="text-xs text-amber-600 mt-0.5">Low cash — below 25% of float</p>
+                                                <p className="text-xs text-amber-600 mt-0.5">Low available cash — below 25% of float</p>
                                             </div>
                                             <div className="text-right">
-                                                <p className="text-sm font-bold text-amber-600 tabular-nums">{formatCurrency(p.balance)}</p>
-                                                <p className="text-xs text-slate-400 mt-0.5">Refill: {formatCurrency(getRefillRecommendation(p.balance, p.targetFloat))}</p>
+                                                <p className="text-sm font-bold text-amber-600 tabular-nums">{formatCurrency(p.availableBalance)}</p>
+                                                <p className="text-xs text-slate-400 mt-0.5">Refill: {formatCurrency(getRefillRecommendation(p.availableBalance, p.targetFloat))}</p>
                                             </div>
                                         </div>
                                     ))}
@@ -843,16 +868,16 @@ export default function ClusterReportsPage() {
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="bg-slate-50 border-b border-slate-100">
-                                    {["Store", "Current Balance", "Treasury Health", "Pending", "Refill Needed", "Status"].map((h) => (
+                                    {["Store", "Available Balance", "Treasury Health", "Pending", "Refill Needed", "Status"].map((h) => (
                                         <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
                                 {storeTreasuryPositions.map((pos, i) => {
-                                    const refill = getRefillRecommendation(pos.balance, pos.targetFloat);
-                                    const health = getCashHealth(pos.balance, pos.targetFloat);
-                                    const isNeg = pos.balance < 0;
+                                    const refill = getRefillRecommendation(pos.availableBalance, pos.targetFloat);
+                                    const health = getCashHealth(pos.availableBalance, pos.targetFloat);
+                                    const isNeg = pos.availableBalance < 0;
                                     return (
                                         <tr key={pos.storeId}
                                             className={`border-b border-slate-50 transition-colors ${isNeg ? "bg-red-50/30 hover:bg-red-50/50"
@@ -861,11 +886,18 @@ export default function ClusterReportsPage() {
                                                         : "bg-slate-50/30 hover:bg-slate-50/70"
                                                 }`}>
                                             <td className="px-5 py-3 font-medium text-slate-800 whitespace-nowrap">{pos.name}</td>
-                                            <td className={`px-5 py-3 font-bold tabular-nums whitespace-nowrap ${isNeg ? "text-red-600" : "text-slate-900"}`}>
-                                                {formatCurrency(pos.balance)}
+                                            <td className="px-5 py-3 whitespace-nowrap">
+                                                <p className={`font-bold tabular-nums ${isNeg ? "text-red-600" : "text-slate-900"}`}>
+                                                    {formatCurrency(pos.availableBalance)}
+                                                </p>
+                                                {pos.reservedAmount > 0 && (
+                                                    <p className="text-xs text-amber-600 mt-0.5 tabular-nums">
+                                                        {formatCurrency(pos.reservedAmount)} reserved
+                                                    </p>
+                                                )}
                                             </td>
                                             <td className="px-5 py-3">
-                                                <HealthBadge balance={pos.balance} targetFloat={pos.targetFloat} />
+                                                <HealthBadge balance={pos.availableBalance} targetFloat={pos.targetFloat} />
                                             </td>
                                             <td className="px-5 py-3 text-slate-600 tabular-nums">
                                                 {pos.pendingCount > 0 ? (
@@ -889,7 +921,7 @@ export default function ClusterReportsPage() {
                                                     <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-700 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full">
                                                         <Clock className="w-3 h-3" /> Stalled
                                                     </span>
-                                                ) : pos.balance >= 0 && !refill ? (
+                                                ) : pos.availableBalance >= 0 && !refill ? (
                                                     <span className="text-xs text-emerald-600 font-medium">Operational</span>
                                                 ) : (
                                                     <span className="text-xs text-slate-400">Active</span>
@@ -1010,7 +1042,7 @@ export default function ClusterReportsPage() {
                 <Card className="rounded-xl border border-slate-200 shadow-sm">
                     <div className="px-5 pt-4 pb-2">
                         <p className="text-sm font-semibold text-slate-700">Top Stores by Approved Spend</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Ranked by accounting-approved amount</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Ranked by fully approved spend</p>
                     </div>
                     <div className="px-5 pb-5">
                         {topStoresChart.length === 0 ? <EmptyChart /> : (
@@ -1296,7 +1328,7 @@ export default function ClusterReportsPage() {
                     <div className="px-5 pb-2">
                         <PipelineStep label="Awaiting Your Approval" count={submitted.length}
                             amount={sumAmount(submitted)} color="#f59e0b" icon={<Clock className="w-4 h-4" />} />
-                        <PipelineStep label="Cluster Approved → Accounting" count={acctPend.length}
+                        <PipelineStep label="Approved (Accounting Recording)" count={acctPend.length}
                             amount={sumAmount(acctPend)} color="#14b8a6" icon={<CheckCircle2 className="w-4 h-4" />} />
                         <PipelineStep label="Fully Approved" count={approved.length}
                             amount={totalApproved} color="#22c55e" icon={<TrendingUp className="w-4 h-4" />} />

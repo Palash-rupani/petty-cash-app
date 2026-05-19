@@ -18,11 +18,14 @@ interface ApprovalActionsProps {
   onDone?: () => void
 }
 
-/** Roles that perform the final accounting approval and therefore need balance warnings. */
-const ACCOUNTING_ROLES: Role[] = ['accounting']
+/**
+ * Roles that perform the FINAL approval — both cluster managers (who finalise
+ * the expense atomically) and accounting (supervisory) get the balance pre-check.
+ */
+const FINAL_APPROVAL_ROLES: Role[] = ['cluster_manager', 'accounting']
 
-function isAccountingRole(role: Role): boolean {
-  return ACCOUNTING_ROLES.includes(role)
+function isFinalApprovalRole(role: Role): boolean {
+  return FINAL_APPROVAL_ROLES.includes(role)
 }
 
 /** Format a rupee amount, handling negatives cleanly. */
@@ -69,8 +72,8 @@ export function ApprovalActions({
   const handleApprove = async () => {
     setError(null)
 
-    // Only accounting roles get the balance pre-check
-    if (!isAccountingRole(userRole)) {
+    // Cluster managers and accounting both get the pre-approval balance check
+    if (!isFinalApprovalRole(userRole)) {
       await executeApprove()
       return
     }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { getStoreBalance } from '@/lib/utils/getStoreBalance'
+import { getAvailableBalance } from '@/lib/finance/getAvailableBalance'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { getCashHealth, CASH_HEALTH_CONFIG } from '@/lib/finance/getCashHealth'
 import { getRefillRecommendation } from '@/lib/finance/getRefillRecommendation'
@@ -98,8 +98,10 @@ interface StoreManagerStatsProps {
 function StoreManagerStats({ user }: StoreManagerStatsProps) {
   const supabase = createClient()
 
-  // null = fetch failed; number = confirmed ledger value (0 and negatives are valid)
-  const [balance, setBalance] = useState<number | null>(null)
+  // null = fetch failed; number = confirmed value (0 and negatives are valid)
+  const [balance, setBalance] = useState<number | null>(null)        // availableBalance
+  const [actualBalance, setActualBalance] = useState<number | null>(null)
+  const [reservedAmount, setReservedAmount] = useState(0)
   const [targetFloat, setTargetFloat] = useState(0)
   const [pendingCount, setPendingCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -109,8 +111,8 @@ function StoreManagerStats({ user }: StoreManagerStatsProps) {
 
     async function load() {
       setLoading(true)
-      const [bal, storeRes, expRes] = await Promise.all([
-        getStoreBalance(user.store_id!),
+      const [availData, storeRes, expRes] = await Promise.all([
+        getAvailableBalance(user.store_id!),
         supabase
           .from('stores')
           .select('monthly_limit')
@@ -120,11 +122,19 @@ function StoreManagerStats({ user }: StoreManagerStatsProps) {
           .from('expenses')
           .select('id')
           .eq('store_id', user.store_id!)
-          // submitted = awaiting cluster; cluster_approved = awaiting accounting
-          .in('status', ['submitted', 'cluster_approved']),
+          // submitted = awaiting cluster approval (which is now final)
+          .eq('status', 'submitted'),
       ])
 
-      setBalance(bal)
+      if (availData) {
+        setBalance(availData.availableBalance)
+        setActualBalance(availData.actualBalance)
+        setReservedAmount(availData.reservedAmount)
+      } else {
+        setBalance(null)
+        setActualBalance(null)
+        setReservedAmount(0)
+      }
       setTargetFloat(storeRes.data?.monthly_limit ?? 0)
       setPendingCount((expRes.data ?? []).length)
       setLoading(false)
@@ -141,11 +151,17 @@ function StoreManagerStats({ user }: StoreManagerStatsProps) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {/* 1. Available Cash — ledger-derived */}
+        {/* 1. Available Balance — availableBalance = actualBalance − reservedAmount */}
         <StatCard
-          title="Available Cash"
+          title="Available Balance"
           value={balance !== null ? formatCurrency(balance) : '—'}
-          subtitle={isNegative ? 'Negative balance' : 'Current ledger balance'}
+          subtitle={
+            isNegative
+              ? 'Negative — refill required'
+              : reservedAmount > 0
+                ? `Reserved: ${formatCurrency(reservedAmount)}`
+                : 'No active reservations'
+          }
           icon={
             <Wallet
               size={18}
@@ -414,11 +430,11 @@ function AccountingStats({ user: _user }: AccountingStatsProps) {
         iconBg={totalRefillNeeded > 0 ? 'bg-amber-50' : 'bg-emerald-50'}
       />
 
-      {/* 3. Accounting approval queue — cluster-approved, awaiting final sign-off */}
+      {/* 3. Supervisory review queue — cluster-approved, needs accounting record */}
       <StatCard
-        title="Pending Queue"
+        title="Supervisory Review"
         value={String(pendingQueue)}
-        subtitle="Cluster-approved, awaiting you"
+        subtitle="Cluster-approved, needs recording"
         icon={<TrendingUp size={18} className="text-orange-600" />}
         iconBg="bg-orange-50"
         valueColor={pendingQueue > 0 ? 'text-orange-700' : undefined}

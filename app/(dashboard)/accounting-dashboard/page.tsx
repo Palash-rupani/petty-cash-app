@@ -6,7 +6,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
-import { getClusterBalances } from "@/lib/finance/getClusterBalances";
+import { getClusterAvailableBalances } from "@/lib/finance/getClusterAvailableBalances";
 import { getCashHealth } from "@/lib/finance/getCashHealth";
 import { getRefillRecommendation } from "@/lib/finance/getRefillRecommendation";
 import { getClusterName } from "@/lib/utils/getClusterName";
@@ -47,7 +47,8 @@ interface Expense {
 interface ClusterTreasuryPosition {
     clusterId: string;
     name: string;
-    balance: number;
+    balance: number;       // availableBalance sum for the cluster
+    actualBalance: number; // actual ledger balance sum (credits − debits)
     targetFloat: number;
     refillNeed: number;
     criticalStores: number;
@@ -190,7 +191,8 @@ export default function EnterpriseTreasuryDashboard() {
 
     const [stores, setStores] = useState<StoreRow[]>([]);
     const [expenses, setExpenses] = useState<Expense[]>([]);
-    const [balanceMap, setBalanceMap] = useState<Record<string, number> | null>(null);
+    const [balanceMap, setBalanceMap] = useState<Record<string, number> | null>(null);       // available
+    const [actualBalanceMap, setActualBalanceMap] = useState<Record<string, number>>({});    // actual
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -218,9 +220,9 @@ export default function EnterpriseTreasuryDashboard() {
                     return;
                 }
 
-                // 2. Fetch balances and expenses
+                // 2. Fetch available balances (actual + reserved) and expenses
                 const [balances, expResult] = await Promise.all([
-                    getClusterBalances(storeIds),
+                    getClusterAvailableBalances(storeIds),
                     supabase
                         .from("expenses")
                         .select("id, amount, status, expense_month, created_at, store_id, categories(name)")
@@ -229,9 +231,14 @@ export default function EnterpriseTreasuryDashboard() {
 
                 if (expResult.error) throw expResult.error;
 
-                const bMap: Record<string, number> = {};
-                balances.forEach((b) => { bMap[b.storeId] = b.balance; });
+                const bMap: Record<string, number> = {};        // available
+                const aBMap: Record<string, number> = {};       // actual
+                balances.forEach((b) => {
+                    bMap[b.storeId] = b.availableBalance;
+                    aBMap[b.storeId] = b.actualBalance;
+                });
                 setBalanceMap(bMap);
+                setActualBalanceMap(aBMap);
 
                 const expRows = ((expResult.data ?? []) as any[]).map((row) => ({
                     ...row,
@@ -267,6 +274,7 @@ export default function EnterpriseTreasuryDashboard() {
                     clusterId: cid,
                     name: getClusterName(s.clusters),
                     balance: 0,
+                    actualBalance: 0,
                     targetFloat: 0,
                     refillNeed: 0,
                     criticalStores: 0,
@@ -276,12 +284,14 @@ export default function EnterpriseTreasuryDashboard() {
             }
 
             const pos = map[cid];
-            const bal = balanceMap[s.id] ?? 0;
+            const bal = balanceMap[s.id] ?? 0;          // available balance
+            const actual = actualBalanceMap[s.id] ?? 0;
             const target = s.monthly_limit ?? 0;
-            const health = getCashHealth(bal, target);
+            const health = getCashHealth(bal, target);   // health = f(availableBalance)
 
             pos.storeCount++;
             pos.balance += bal;
+            pos.actualBalance += actual;
             pos.targetFloat += target;
             pos.refillNeed += getRefillRecommendation(bal, target);
             if (health === "low" || health === "negative") pos.criticalStores++;
@@ -298,7 +308,7 @@ export default function EnterpriseTreasuryDashboard() {
         });
 
         return Object.values(map).sort((a, b) => a.balance - b.balance);
-    }, [stores, expenses, balanceMap]);
+    }, [stores, expenses, balanceMap, actualBalanceMap]);
 
     // Enterprise KPIs
     const totalTreasuryBalance = useMemo(() => globalPositions.reduce((s, p) => s + p.balance, 0), [globalPositions]);
@@ -422,7 +432,7 @@ export default function EnterpriseTreasuryDashboard() {
         // General pipeline
         if (totalTreasuryBalance < 0) {
             out.push({
-                text: `Severe Treasury Imbalance: Overall enterprise ledger is in deficit by ${formatCurrency(Math.abs(totalTreasuryBalance))}. Review immediate liabilities.`,
+                text: `Severe Treasury Imbalance: Enterprise available balance is in deficit by ${formatCurrency(Math.abs(totalTreasuryBalance))}. Review immediate liabilities and reservations.`,
                 severity: "danger", icon: <Landmark className="w-4 h-4" />
             });
         } else if (totalRefillRequirement === 0) {
@@ -477,7 +487,7 @@ export default function EnterpriseTreasuryDashboard() {
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-4 mb-10">
                 <KpiCard
                     icon={<Landmark className="w-5 h-5 text-indigo-600" />} bg="bg-indigo-50"
-                    label="Total Treasury Balance"
+                    label="Total Available Balance"
                     value={formatCurrency(totalTreasuryBalance)}
                     sub={`${stores.length} active stores`}
                 />
@@ -540,7 +550,7 @@ export default function EnterpriseTreasuryDashboard() {
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="bg-white border-b border-slate-200">
-                                    {["Cluster", "Treasury Balance", "Risk Level", "Refill Need", "Pending Exposure", "Critical Stores"].map((h) => (
+                                    {["Cluster", "Available Balance", "Risk Level", "Refill Need", "Pending Exposure", "Critical Stores"].map((h) => (
                                         <th key={h} className="text-left px-5 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider">{h}</th>
                                     ))}
                                 </tr>
@@ -554,8 +564,13 @@ export default function EnterpriseTreasuryDashboard() {
                                     return (
                                         <tr key={pos.clusterId} className="hover:bg-slate-50/80 transition-colors bg-white">
                                             <td className="px-5 py-4 font-bold text-slate-800">{pos.name}</td>
-                                            <td className={`px-5 py-4 font-bold tabular-nums ${pos.balance < 0 ? "text-red-600" : "text-slate-900"}`}>
-                                                {formatCurrency(pos.balance)}
+                                            <td className="px-5 py-4">
+                                                <p className={`font-bold tabular-nums ${pos.balance < 0 ? "text-red-600" : "text-slate-900"}`}>
+                                                    {formatCurrency(pos.balance)}
+                                                </p>
+                                                <p className="text-xs text-slate-400 mt-0.5 tabular-nums">
+                                                    Actual: {formatCurrency(pos.actualBalance)}
+                                                </p>
                                             </td>
                                             <td className="px-5 py-4">
                                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${riskColor}`}>

@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
-import { getStoreBalance } from '@/lib/utils/getStoreBalance'
+import { getAvailableBalance } from '@/lib/finance/getAvailableBalance'
 import { getCashHealth } from '@/lib/finance/getCashHealth'
 import { getRefillRecommendation } from '@/lib/finance/getRefillRecommendation'
 import { computeRunway, getRunwaySeverity } from '@/lib/finance/computeRunway'
@@ -38,17 +38,17 @@ import {
     XCircle,
     AlertTriangle,
     CheckCircle2,
-    ChevronRight,
     Target,
     ShieldAlert,
     Timer,
     Banknote,
+    Lock,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type TimeRange = "this_month" | "last_3_months" | "custom";
-type StatusFilter = "all" | "approved" | "pending" | "rejected";
+type StatusFilter = "all" | "submitted" | "executed" | "rejected";
 
 interface Expense {
     id: string;
@@ -67,7 +67,6 @@ interface StoreInfo {
 }
 
 // Represents a single credit entry from the cash_transactions ledger.
-// `note` is the operator's free-text remark; may be null if not recorded.
 interface CreditTransaction {
     id: string;
     amount: number;
@@ -75,12 +74,16 @@ interface CreditTransaction {
     remarks: string | null;
 }
 
-import { PENDING_STATUSES, ACTIVE_APPROVAL_STATUSES } from "@/lib/constants/expenseStatuses";
+// ─── Treasury Lifecycle Status Constants ──────────────────────────────────────
+//
+// submitted  = active treasury reservation — pending liquidity exposure,
+//              awaiting cluster final approval
+// executed   = approved — finalized debit, completed treasury operation
+// rejected   = released reservation — closed exposure
 
-// ─── Status Groups ────────────────────────────────────────────────────────────
-
-const APPROVED_STATUSES = ["accounting_approved", "synced_to_tally"];
-const REJECTED_STATUSES = ["cluster_rejected", "accounting_rejected", "tally_sync_failed"];
+const SUBMITTED_STATUS = "submitted";
+const EXECUTED_STATUS = "approved";
+const REJECTED_STATUS = "rejected";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,22 +130,20 @@ function pct(part: number, total: number) {
 }
 
 // Returns a human-readable relative timestamp for treasury activity rows.
-// Keeps recent events short ("Today", "2 days ago") and falls back to the
-// full date label for anything older than a week.
 function relativeTime(dateStr: string): string {
     const diffMs = Date.now() - new Date(dateStr).getTime();
     const diffMins = Math.floor(diffMs / 60_000);
     const diffHours = Math.floor(diffMs / 3_600_000);
     const diffDays = Math.floor(diffMs / 86_400_000);
-    if (diffMins < 60)  return `${diffMins}m ago`;
+    if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays === 0)  return "Today";
-    if (diffDays === 1)  return "Yesterday";
-    if (diffDays < 7)   return `${diffDays} days ago`;
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return `${diffDays} days ago`;
     return isoToLabel(dateStr);
 }
 
-const PIE_COLORS = { approved: "#22c55e", pending: "#f59e0b", rejected: "#ef4444" };
+const PIE_COLORS = { executed: "#22c55e", submitted: "#f59e0b", rejected: "#ef4444" };
 
 // ─── Cash Level Gauge ─────────────────────────────────────────────────────────
 
@@ -227,28 +228,6 @@ function ProgressBar({ value, color }: { value: number; color: string }) {
     );
 }
 
-// ─── Funnel Step ──────────────────────────────────────────────────────────────
-
-function FunnelStep({ label, count, amount, color, icon }: {
-    label: string; count: number; amount: number; color: string; icon: React.ReactNode;
-}) {
-    return (
-        <div className="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">
-            <div className="p-2 rounded-lg flex-shrink-0" style={{ backgroundColor: color + "18" }}>
-                <div style={{ color }}>{icon}</div>
-            </div>
-            <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-sm font-medium text-slate-700">{label}</span>
-                    <span className="text-sm font-bold text-slate-900 tabular-nums">{count}</span>
-                </div>
-                <span className="text-xs text-slate-400">{formatCurrency(amount)}</span>
-            </div>
-            <ChevronRight className="w-4 h-4 text-slate-200 flex-shrink-0" />
-        </div>
-    );
-}
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function StoreManagerReportPage() {
@@ -260,9 +239,10 @@ export default function StoreManagerReportPage() {
     const [trendData, setTrendData] = useState<{ month: string; amount: number }[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [balance, setBalance] = useState<number | null>(null);
+    const [balance, setBalance] = useState<number | null>(null);       // availableBalance
+    const [actualBalance, setActualBalance] = useState<number | null>(null);
+    const [reservedAmount, setReservedAmount] = useState<number>(0);
     // Recent credit transactions — the treasury inflow ledger for this store.
-    // Capped at 5; null means the fetch hasn't completed yet.
     const [credits, setCredits] = useState<CreditTransaction[] | null>(null);
 
     const [timeRange, setTimeRange] = useState<TimeRange>("this_month");
@@ -282,8 +262,16 @@ export default function StoreManagerReportPage() {
     useEffect(() => {
         async function loadBalance() {
             if (!user?.store_id) return;
-            const value = await getStoreBalance(user.store_id);
-            setBalance(value);
+            const data = await getAvailableBalance(user.store_id);
+            if (data) {
+                setBalance(data.availableBalance);
+                setActualBalance(data.actualBalance);
+                setReservedAmount(data.reservedAmount);
+            } else {
+                setBalance(null);
+                setActualBalance(null);
+                setReservedAmount(0);
+            }
         }
         loadBalance();
     }, [user, expenses]);
@@ -310,6 +298,7 @@ export default function StoreManagerReportPage() {
             });
     }, [user?.store_id, timeRange, customFrom, customTo]);
 
+    // Trend data uses only executed (approved) expenses — the actual debit history.
     useEffect(() => {
         if (!user?.store_id) return;
         const sixMonthsAgo = new Date();
@@ -318,7 +307,7 @@ export default function StoreManagerReportPage() {
         supabase.from("expenses")
             .select("amount, expense_month, status, created_at")
             .eq("store_id", user.store_id)
-            .in("status", APPROVED_STATUSES)
+            .eq("status", EXECUTED_STATUS)
             .gte("created_at", sixMonthsAgo.toISOString())
             .then(({ data }) => {
                 if (!data) return;
@@ -340,9 +329,6 @@ export default function StoreManagerReportPage() {
     }, [user?.store_id]);
 
     // ── Fetch recent treasury credits (inflows) ──────────────────────────────
-    //
-    // One query: latest 5 credit-type ledger entries for this store.
-    // This is the financial source of truth for top-up history — not expenses.
     useEffect(() => {
         if (!user?.store_id) return;
         supabase
@@ -364,13 +350,14 @@ export default function StoreManagerReportPage() {
 
     // ── Derived calculations ─────────────────────────────────────────────────
 
-    const approved = useMemo(() => expenses.filter((e) => APPROVED_STATUSES.includes(e.status)), [expenses]);
-    const pending = useMemo(() => expenses.filter((e) => (PENDING_STATUSES as readonly string[]).includes(e.status)), [expenses]);
-    const rejected = useMemo(() => expenses.filter((e) => REJECTED_STATUSES.includes(e.status)), [expenses]);
+    // Treasury lifecycle buckets — one status per group, no multi-stage overlap
+    const submitted = useMemo(() => expenses.filter((e) => e.status === SUBMITTED_STATUS), [expenses]);
+    const executed = useMemo(() => expenses.filter((e) => e.status === EXECUTED_STATUS), [expenses]);
+    const rejected = useMemo(() => expenses.filter((e) => e.status === REJECTED_STATUS), [expenses]);
     const drafts = useMemo(() => expenses.filter((e) => e.status === "draft"), [expenses]);
 
-    const totalApproved = useMemo(() => approved.reduce((s, e) => s + e.amount, 0), [approved]);
-    const totalPending = useMemo(() => pending.reduce((s, e) => s + e.amount, 0), [pending]);
+    const totalExecuted = useMemo(() => executed.reduce((s, e) => s + e.amount, 0), [executed]);
+    const totalSubmitted = useMemo(() => submitted.reduce((s, e) => s + e.amount, 0), [submitted]);
     const totalRejected = useMemo(() => rejected.reduce((s, e) => s + e.amount, 0), [rejected]);
     const largestExpense = useMemo(
         () => (expenses.length ? Math.max(...expenses.map((e) => e.amount)) : 0),
@@ -398,28 +385,27 @@ export default function StoreManagerReportPage() {
     );
     const runwaySeverity = getRunwaySeverity(runway);
 
+    // Pending exposure = submitted (reserved) expenses as % of actual balance.
+    // Denominator is actualBalance — available already nets out reservations,
+    // so available/available would be meaningless.
     const pendingExposurePct = useMemo<number | null>(() => {
-        if (balance === null || balance <= 0) return null;
-        if (totalPending <= 0) return 0;
-        return (totalPending / balance) * 100;
-    }, [balance, totalPending]);
+        if (actualBalance === null || actualBalance <= 0) return null;
+        if (totalSubmitted <= 0) return 0;
+        return (totalSubmitted / actualBalance) * 100;
+    }, [actualBalance, totalSubmitted]);
 
-    const pendingApprovalRows = useMemo(
-        () => expenses.filter((e) => (ACTIVE_APPROVAL_STATUSES as readonly string[]).includes(e.status)),
-        [expenses]
-    );
-
+    // Aging — how long submitted expenses have been awaiting cluster approval
     const agingOver3 = useMemo(() => {
         const threshold = 3 * 24 * 60 * 60 * 1000;
         const now = Date.now();
-        return pendingApprovalRows.filter((e) => now - new Date(e.created_at).getTime() > threshold);
-    }, [pendingApprovalRows]);
+        return submitted.filter((e) => now - new Date(e.created_at).getTime() > threshold);
+    }, [submitted]);
 
     const agingOver7 = useMemo(() => {
         const threshold = 7 * 24 * 60 * 60 * 1000;
         const now = Date.now();
-        return pendingApprovalRows.filter((e) => now - new Date(e.created_at).getTime() > threshold);
-    }, [pendingApprovalRows]);
+        return submitted.filter((e) => now - new Date(e.created_at).getTime() > threshold);
+    }, [submitted]);
 
     const treasuryInsights = useMemo(() => {
         type Severity = 'info' | 'warning' | 'critical';
@@ -430,19 +416,19 @@ export default function StoreManagerReportPage() {
             return insights;
         }
         if (balance < 0) {
-            insights.push({ text: `Balance is ${formatCurrency(Math.abs(balance))} below zero. Immediate top-up required.`, severity: "critical" });
+            insights.push({ text: `Available balance is ${formatCurrency(Math.abs(balance))} below zero. Immediate top-up required.`, severity: "critical" });
         } else if (targetFloat > 0 && balance < targetFloat * 0.25) {
             const refill = getRefillRecommendation(balance, targetFloat);
-            insights.push({ text: `Cash is critically low — below 25% of target float. Refill of ${formatCurrency(refill)} needed.`, severity: "critical" });
+            insights.push({ text: `Available liquidity is critically low — below 25% of target float. Refill of ${formatCurrency(refill)} needed.`, severity: "critical" });
         } else if (targetFloat > 0 && balance < targetFloat * 0.5) {
             const refill = getRefillRecommendation(balance, targetFloat);
-            insights.push({ text: `Cash is below 50% of target float. Consider topping up ${formatCurrency(refill)} soon.`, severity: "warning" });
+            insights.push({ text: `Available liquidity is below 50% of target float. Consider topping up ${formatCurrency(refill)} soon.`, severity: "warning" });
         }
 
         if (pendingExposurePct !== null && pendingExposurePct > 75) {
-            insights.push({ text: `Pending approvals total ${formatCurrency(totalPending)}, locking up ${pendingExposurePct.toFixed(0)}% of available cash — high exposure.`, severity: "critical" });
+            insights.push({ text: `Active reservations total ${formatCurrency(totalSubmitted)}, representing ${pendingExposurePct.toFixed(0)}% of actual balance — high liquidity exposure.`, severity: "critical" });
         } else if (pendingExposurePct !== null && pendingExposurePct > 40) {
-            insights.push({ text: `Pending approvals represent ${pendingExposurePct.toFixed(0)}% of available cash (${formatCurrency(totalPending)}).`, severity: "warning" });
+            insights.push({ text: `Active reservations (${formatCurrency(totalSubmitted)}) represent ${pendingExposurePct.toFixed(0)}% of actual balance — monitor closely.`, severity: "warning" });
         }
 
         if (runway !== null && runway < 7) {
@@ -452,22 +438,23 @@ export default function StoreManagerReportPage() {
         }
 
         if (agingOver7.length > 0) {
-            insights.push({ text: `${agingOver7.length} expense${agingOver7.length > 1 ? "s" : ""} pending for more than 7 days — follow-up recommended.`, severity: "warning" });
+            insights.push({ text: `${agingOver7.length} expense${agingOver7.length > 1 ? "s" : ""} have been reserved for more than 7 days — follow-up recommended.`, severity: "warning" });
         } else if (agingOver3.length > 0) {
-            insights.push({ text: `${agingOver3.length} expense${agingOver3.length > 1 ? "s" : ""} pending for more than 3 days without action.`, severity: "warning" });
+            insights.push({ text: `${agingOver3.length} expense${agingOver3.length > 1 ? "s" : ""} have been reserved for more than 3 days without resolution.`, severity: "warning" });
         }
 
         if (insights.length === 0) {
             insights.push({ text: "Treasury position is stable. No immediate action required.", severity: "info" });
         }
         return insights;
-    }, [balance, targetFloat, pendingExposurePct, totalPending, runway, agingOver3, agingOver7]);
+    }, [balance, targetFloat, pendingExposurePct, totalSubmitted, runway, agingOver3, agingOver7]);
 
+    // Category breakdown uses executed expenses — the finalised debit history
     const categoryData = useMemo(() => {
         const map: Record<string, number> = {};
-        approved.forEach((e) => { const k = e.categories?.name ?? "Uncategorized"; map[k] = (map[k] ?? 0) + e.amount; });
+        executed.forEach((e) => { const k = e.categories?.name ?? "Uncategorized"; map[k] = (map[k] ?? 0) + e.amount; });
         return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-    }, [approved]);
+    }, [executed]);
 
     const rejectionByCategory = useMemo(() => {
         const map: Record<string, { count: number; total: number }> = {};
@@ -479,33 +466,29 @@ export default function StoreManagerReportPage() {
         return Object.entries(map).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.count - a.count);
     }, [rejected]);
 
+    // Pie shows treasury distribution: executed / reserved (submitted) / rejected
     const pieData = useMemo(() => [
-        { name: "Approved", value: totalApproved, color: PIE_COLORS.approved },
-        { name: "Pending", value: totalPending, color: PIE_COLORS.pending },
+        { name: "Executed", value: totalExecuted, color: PIE_COLORS.executed },
+        { name: "Reserved", value: totalSubmitted, color: PIE_COLORS.submitted },
         { name: "Rejected", value: totalRejected, color: PIE_COLORS.rejected },
-    ].filter((d) => d.value > 0), [totalApproved, totalPending, totalRejected]);
+    ].filter((d) => d.value > 0), [totalExecuted, totalSubmitted, totalRejected]);
 
     const filteredExpenses = useMemo(() => {
         if (statusFilter === "all") return expenses;
-        if (statusFilter === "approved") return approved;
-        if (statusFilter === "pending") return pending;
+        if (statusFilter === "submitted") return submitted;
+        if (statusFilter === "executed") return executed;
         if (statusFilter === "rejected") return rejected;
         return expenses;
-    }, [expenses, statusFilter, approved, pending, rejected]);
+    }, [expenses, statusFilter, submitted, executed, rejected]);
 
     const draftTotal = useMemo(() => drafts.reduce((s, e) => s + e.amount, 0), [drafts]);
-    const inReviewTotal = useMemo(() => pendingApprovalRows.reduce((s, e) => s + e.amount, 0), [pendingApprovalRows]);
-
     const cashLevelPct = pct(balance ?? 0, targetFloat);
-    const exposurePctBar = pct(totalPending, balance ?? 0);
+    // Exposure bar: submitted reservations as % of actual balance
+    const exposurePctBar = pct(totalSubmitted, actualBalance ?? 0);
 
     // ── Credit / inflow analytics ────────────────────────────────────────────
 
-    // Most recent credit transaction; null while loading or when none exist.
     const lastTopUp = credits?.[0] ?? null;
-
-    // Average top-up amount across the fetched history (up to 5 entries).
-    // Used to flag unusually large injections.
     const avgTopUpAmount = useMemo(() => {
         if (!credits || credits.length === 0) return 0;
         return credits.reduce((s, c) => s + Number(c.amount), 0) / credits.length;
@@ -574,36 +557,33 @@ export default function StoreManagerReportPage() {
                 <div className="h-5 w-px bg-slate-200 hidden sm:block" />
 
                 <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-                    {(["all", "approved", "pending", "rejected"] as StatusFilter[]).map((s) => (
+                    {(["all", "submitted", "executed", "rejected"] as StatusFilter[]).map((s) => (
                         <button key={s} onClick={() => setStatusFilter(s)}
                             className={`px-3 py-1.5 rounded-md text-sm font-medium capitalize transition-all ${statusFilter === s
                                 ? "bg-white text-slate-900 shadow-sm"
                                 : "text-slate-500 hover:text-slate-800"
                                 }`}>
-                            {s}
+                            {s === "executed" ? "Executed" : s.charAt(0).toUpperCase() + s.slice(1)}
                         </button>
                     ))}
                 </div>
             </div>
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION A — Overview
+                SECTION 1 — Treasury Overview
+                5 KPIs: Available Balance · Reserved Amount · Actual Balance
+                        · Pending Exposure Count · Executed Count
             ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Overview" />
+            <SectionHeading title="Treasury Overview" />
 
-            {/*
-              Available Cash takes the full first row so it's visually prominent.
-              The four secondary KPIs sit below in a uniform 4-col grid —
-              same height, same padding, same rhythm as every other KPI row.
-            */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
-                {/* Available Cash — spans 2 cols to carry its visual weight intentionally */}
+                {/* Available Balance — wide card; shows all three treasury metrics */}
                 <div className="sm:col-span-2 xl:col-span-2">
                     <Card className="h-full rounded-xl border border-slate-200 shadow-sm">
                         <CardContent className="flex flex-col justify-between h-full px-6 py-5">
                             <div>
                                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-                                    Available Cash
+                                    Available Balance
                                 </p>
                                 {balance !== null ? (
                                     <p className={`text-4xl font-bold tracking-tight tabular-nums ${balance < 0 ? 'text-red-600' : 'text-slate-900'}`}>
@@ -611,6 +591,27 @@ export default function StoreManagerReportPage() {
                                     </p>
                                 ) : (
                                     <p className="text-2xl font-semibold text-slate-400 italic">Unavailable</p>
+                                )}
+                                {/* Actual / Reserved breakdown */}
+                                {actualBalance !== null && (
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2.5">
+                                        <span className="text-xs text-slate-400">
+                                            Actual:{' '}
+                                            <span className="font-semibold text-slate-600 tabular-nums">
+                                                {formatCurrency(actualBalance)}
+                                            </span>
+                                        </span>
+                                        {reservedAmount > 0 ? (
+                                            <span className="text-xs text-amber-600">
+                                                Reserved:{' '}
+                                                <span className="font-semibold tabular-nums">
+                                                    {formatCurrency(reservedAmount)}
+                                                </span>
+                                            </span>
+                                        ) : (
+                                            <span className="text-xs text-emerald-600 font-medium">No reservations</span>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                             <div className="mt-4">
@@ -620,7 +621,44 @@ export default function StoreManagerReportPage() {
                     </Card>
                 </div>
 
-                {/* Target Float */}
+                {/* Reserved Amount — active reservations from submitted expenses */}
+                <StatCard
+                    icon={<Lock className="w-4 h-4 text-amber-600" />}
+                    bg="bg-amber-50"
+                    label="Reserved Amount"
+                    value={formatCurrency(reservedAmount)}
+                    sub={submitted.length > 0 ? `${submitted.length} active reservation${submitted.length > 1 ? "s" : ""}` : "No active reservations"}
+                    subColor={reservedAmount > 0 ? "text-amber-600" : "text-emerald-600"}
+                />
+
+                {/* Actual Balance — finalized ledger; before netting out reservations */}
+                <StatCard
+                    icon={<Wallet className="w-4 h-4 text-indigo-600" />}
+                    bg="bg-indigo-50"
+                    label="Actual Balance"
+                    value={actualBalance !== null ? formatCurrency(actualBalance) : "—"}
+                    sub="Finalized ledger balance"
+                />
+            </div>
+
+            {/* Second row: pending exposure count + executed count + target float + largest expense */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+                <StatCard
+                    icon={<Clock className="w-4 h-4 text-amber-500" />}
+                    bg="bg-amber-50"
+                    label="Pending Exposure"
+                    value={String(submitted.length)}
+                    sub={submitted.length > 0 ? `${formatCurrency(totalSubmitted)} reserved` : "No active reservations"}
+                    subColor={submitted.length > 0 ? "text-amber-600" : "text-emerald-600"}
+                />
+                <StatCard
+                    icon={<CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+                    bg="bg-emerald-50"
+                    label="Executed Expenses"
+                    value={String(executed.length)}
+                    sub={executed.length > 0 ? `${formatCurrency(totalExecuted)} total` : "None this period"}
+                    subColor={executed.length > 0 ? "text-emerald-600" : "text-slate-400"}
+                />
                 <StatCard
                     icon={<Target className="w-4 h-4 text-slate-500" />}
                     bg="bg-slate-100"
@@ -628,33 +666,12 @@ export default function StoreManagerReportPage() {
                     value={targetFloat > 0 ? formatCurrency(targetFloat) : "—"}
                     sub="Ideal cash on hand"
                 />
-
-                {/* Total Approved Spend */}
-                <StatCard
-                    icon={<Wallet className="w-4 h-4 text-indigo-600" />}
-                    bg="bg-indigo-50"
-                    label="Total Approved Spend"
-                    value={formatCurrency(totalApproved)}
-                />
-            </div>
-
-            {/* Second row: count + largest expense, aligned to same 4-col grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-                <StatCard
-                    icon={<Receipt className="w-4 h-4 text-violet-600" />}
-                    bg="bg-violet-50"
-                    label="Number of Expenses"
-                    value={String(expenses.length)}
-                />
                 <StatCard
                     icon={<ArrowUpCircle className="w-4 h-4 text-amber-600" />}
                     bg="bg-amber-50"
                     label="Largest Expense"
                     value={formatCurrency(largestExpense)}
                 />
-                {/* Two empty spacer cells keep the row visually balanced on xl */}
-                <div className="hidden xl:block" />
-                <div className="hidden xl:block" />
             </div>
 
             {/* ══════════════════════════════════════════════════════════════════
@@ -662,7 +679,6 @@ export default function StoreManagerReportPage() {
             ══════════════════════════════════════════════════════════════════ */}
             <SectionHeading title="Treasury Intelligence" />
 
-            {/* Four intelligence cards — 2×2 on tablet, single row on desktop */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
                 <StatCard
                     icon={<Timer className="w-4 h-4 text-indigo-600" />}
@@ -691,7 +707,7 @@ export default function StoreManagerReportPage() {
                     sub={
                         activeMonthCount > 0
                             ? `Based on ${activeMonthCount} active month${activeMonthCount > 1 ? "s" : ""}`
-                            : "No approved spend history"
+                            : "No executed spend history"
                     }
                 />
                 <StatCard
@@ -701,8 +717,8 @@ export default function StoreManagerReportPage() {
                     value={pendingExposurePct !== null ? `${pendingExposurePct.toFixed(0)}%` : "—"}
                     sub={
                         pendingExposurePct === null
-                            ? (balance === null ? "Balance unavailable" : "No pending amounts")
-                            : `${formatCurrency(totalPending)} of available cash`
+                            ? (actualBalance === null ? "Balance unavailable" : "No active reservations")
+                            : `${formatCurrency(totalSubmitted)} of actual balance`
                     }
                     subColor={
                         pendingExposurePct === null ? "text-slate-400"
@@ -731,27 +747,23 @@ export default function StoreManagerReportPage() {
                                 ? relativeTime(lastTopUp.created_at)
                                 : "No treasury refill yet"
                     }
-                    subColor={
-                        lastTopUp
-                            ? "text-emerald-600"
-                            : "text-slate-400"
-                    }
+                    subColor={lastTopUp ? "text-emerald-600" : "text-slate-400"}
                 />
             </div>
 
-            {/* Approval Aging Alert */}
+            {/* Reservation Aging Alert */}
             {agingOver3.length > 0 && (
                 <div className="flex items-start gap-3 px-4 py-3.5 bg-amber-50 border border-amber-200 rounded-xl mb-4">
                     <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-px" />
                     <div className="space-y-0.5">
                         {agingOver7.length > 0 && (
                             <p className="text-sm font-semibold text-amber-800">
-                                {agingOver7.length} expense{agingOver7.length > 1 ? "s" : ""} stalled for 7+ days — follow-up needed
+                                {agingOver7.length} reservation{agingOver7.length > 1 ? "s" : ""} open for 7+ days — follow-up needed
                             </p>
                         )}
                         {agingOver3.length > agingOver7.length && (
                             <p className="text-sm text-amber-700">
-                                {agingOver3.length - agingOver7.length} expense{agingOver3.length - agingOver7.length > 1 ? "s" : ""} pending for 3–7 days
+                                {agingOver3.length - agingOver7.length} reservation{agingOver3.length - agingOver7.length > 1 ? "s" : ""} open for 3–7 days
                             </p>
                         )}
                     </div>
@@ -785,7 +797,6 @@ export default function StoreManagerReportPage() {
             {/* ══════════════════════════════════════════════════════════════════
                 SECTION H — Treasury Activity
                 Source of truth: cash_transactions WHERE type = 'credit'.
-                Read-only visibility — no refill workflow here.
             ══════════════════════════════════════════════════════════════════ */}
             <SectionHeading title="Treasury Activity" />
             <Card className="rounded-xl border border-slate-200 shadow-sm mb-8 overflow-hidden">
@@ -805,7 +816,6 @@ export default function StoreManagerReportPage() {
                 </div>
 
                 {credits === null ? (
-                    // Skeleton while the credits query is in-flight
                     <div className="px-5 py-6 space-y-3 animate-pulse">
                         {[...Array(3)].map((_, i) => (
                             <div key={i} className="h-10 bg-slate-100 rounded-lg" />
@@ -815,7 +825,7 @@ export default function StoreManagerReportPage() {
                     <div className="flex flex-col items-center justify-center py-10 text-slate-400">
                         <Banknote className="w-8 h-8 mb-2 text-slate-200" />
                         <p className="text-sm font-medium">No treasury refills recorded yet</p>
-                        <p className="text-xs mt-0.5">Credits will appear here once accounting processes a top-up</p>
+                        <p className="text-xs mt-0.5">Credits will appear here once a top-up is processed</p>
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
@@ -831,8 +841,6 @@ export default function StoreManagerReportPage() {
                             </thead>
                             <tbody>
                                 {credits.map((credit, i) => {
-                                    // Flag a top-up as unusually large if it's more than 2× the
-                                    // average of the fetched batch — a lightweight outlier signal.
                                     const isLarge = avgTopUpAmount > 0 && Number(credit.amount) > avgTopUpAmount * 2;
                                     return (
                                         <tr key={credit.id}
@@ -869,59 +877,79 @@ export default function StoreManagerReportPage() {
             </Card>
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION B — Approval Status Summary
+                SECTION 2 — Active Treasury Exposure
+                ONLY status = 'submitted': active reservations awaiting
+                cluster final approval. Approved expenses do NOT appear here.
             ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Approval Status Summary" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-                <StatCard
-                    icon={<Clock className="w-4 h-4 text-amber-500" />}
-                    bg="bg-amber-50"
-                    label="Pending Expenses"
-                    value={String(pending.length)}
-                    sub={`${formatCurrency(totalPending)} held`}
-                    subColor="text-amber-600"
-                />
-                <StatCard
-                    icon={<Wallet className="w-4 h-4 text-amber-500" />}
-                    bg="bg-amber-50"
-                    label="Pending Amount"
-                    value={formatCurrency(totalPending)}
-                    sub={
-                        pendingExposurePct !== null
-                            ? `${pendingExposurePct.toFixed(1)}% of available cash`
-                            : "Awaiting approval"
-                    }
-                    subColor="text-amber-600"
-                />
-                <StatCard
-                    icon={<XCircle className="w-4 h-4 text-red-500" />}
-                    bg="bg-red-50"
-                    label="Rejected Expenses"
-                    value={String(rejected.length)}
-                    sub={rejected.length > 0 ? `${formatCurrency(totalRejected)} total` : "None this period"}
-                    subColor={rejected.length > 0 ? "text-red-500" : "text-slate-400"}
-                />
-                <StatCard
-                    icon={<Wallet className="w-4 h-4 text-red-500" />}
-                    bg="bg-red-50"
-                    label="Rejected Amount"
-                    value={formatCurrency(totalRejected)}
-                    sub={rejected.length > 0 ? `Across ${rejected.length} expense${rejected.length > 1 ? "s" : ""}` : undefined}
-                    subColor="text-red-500"
-                />
-            </div>
+            {submitted.length > 0 && (
+                <>
+                    <SectionHeading title="Active Treasury Exposure" />
+                    <Card className="rounded-xl border border-amber-200 shadow-sm mb-8 overflow-hidden" style={{ backgroundColor: "rgba(254,243,199,0.12)" }}>
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-amber-100">
+                            <div className="flex items-center gap-2">
+                                <Lock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-700">Reserved Liquidity Queue</p>
+                                    <p className="text-xs text-slate-400 mt-0.5">
+                                        Active reservations · awaiting cluster final approval · {formatCurrency(totalSubmitted)} held
+                                    </p>
+                                </div>
+                            </div>
+                            <span className="text-xs font-semibold text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full flex-shrink-0">
+                                {submitted.length} reservation{submitted.length > 1 ? "s" : ""}
+                            </span>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="bg-amber-50/60 border-b border-amber-100">
+                                        {["Date", "Category", "Amount", "Reserved", "Status"].map((h) => (
+                                            <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {submitted.map((e, i) => {
+                                        const isAging = Date.now() - new Date(e.created_at).getTime() > 3 * 24 * 60 * 60 * 1000;
+                                        return (
+                                            <tr key={e.id}
+                                                className={`border-b border-amber-50 hover:bg-amber-50/50 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-amber-50/20"}`}>
+                                                <td className="px-5 py-3 text-slate-600 whitespace-nowrap">
+                                                    {isoToLabel(e.created_at)}
+                                                    {isAging && (
+                                                        <span className="ml-2 text-xs text-amber-600 font-medium">{relativeTime(e.created_at)}</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-5 py-3 text-slate-700 font-medium">{e.categories?.name ?? "—"}</td>
+                                                <td className="px-5 py-3 font-semibold text-slate-900 tabular-nums">{formatCurrency(e.amount)}</td>
+                                                <td className="px-5 py-3">
+                                                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                                                        <Lock className="w-2.5 h-2.5" />
+                                                        Reserved
+                                                    </span>
+                                                </td>
+                                                <td className="px-5 py-3"><Badge status={e.status as never} /></td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </Card>
+                </>
+            )}
 
             {/* ══════════════════════════════════════════════════════════════════
                 SECTION C — Spend Analytics
             ══════════════════════════════════════════════════════════════════ */}
             <SectionHeading title="Spend Analytics" />
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
 
                 {/* Cash Level Gauge */}
                 <Card className="rounded-xl border border-slate-200 shadow-sm">
                     <div className="px-5 pt-4 pb-1">
                         <p className="text-sm font-semibold text-slate-700">Cash Level</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Balance vs. target float</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Available balance vs. target float</p>
                     </div>
                     <div className="px-5 pb-5">
                         <CashLevelGauge balance={balance} targetFloat={targetFloat} />
@@ -932,7 +960,7 @@ export default function StoreManagerReportPage() {
                         <div className="space-y-3">
                             <div>
                                 <div className="flex items-center justify-between text-xs mb-1.5">
-                                    <span className="text-slate-500">Cash vs target float</span>
+                                    <span className="text-slate-500">Available vs target float</span>
                                     <span className={`font-semibold tabular-nums ${cashLevelPct >= 50 ? "text-emerald-600"
                                         : cashLevelPct >= 25 ? "text-amber-500"
                                             : "text-red-500"
@@ -947,12 +975,12 @@ export default function StoreManagerReportPage() {
                             </div>
                             <div>
                                 <div className="flex items-center justify-between text-xs mb-1.5">
-                                    <span className="text-slate-500">Pending commitments</span>
+                                    <span className="text-slate-500">Active reservations</span>
                                     <span className={`font-semibold tabular-nums ${exposurePctBar > 75 ? "text-red-500"
                                         : exposurePctBar > 40 ? "text-amber-500"
                                             : "text-slate-500"
                                         }`}>
-                                        {balance !== null && balance > 0 ? `${exposurePctBar.toFixed(1)}%` : "—"}
+                                        {actualBalance !== null && actualBalance > 0 ? `${exposurePctBar.toFixed(1)}%` : "—"}
                                     </span>
                                 </div>
                                 <ProgressBar value={exposurePctBar} color="#f59e0b" />
@@ -961,7 +989,7 @@ export default function StoreManagerReportPage() {
                                 <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-100 rounded-lg mt-1">
                                     <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-px" />
                                     <span className="text-xs text-red-600 font-medium leading-snug">
-                                        Balance is negative — immediate refill required
+                                        Available balance is negative — immediate refill required
                                     </span>
                                 </div>
                             )}
@@ -969,7 +997,7 @@ export default function StoreManagerReportPage() {
                                 <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-100 rounded-lg mt-1">
                                     <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-px" />
                                     <span className="text-xs text-amber-700 font-medium leading-snug">
-                                        Pending approvals exceed 75% of available cash
+                                        Active reservations exceed 75% of actual balance
                                     </span>
                                 </div>
                             )}
@@ -977,11 +1005,37 @@ export default function StoreManagerReportPage() {
                     </div>
                 </Card>
 
-                {/* Spend by Category */}
+                {/* Treasury Distribution Pie */}
+                <Card className="rounded-xl border border-slate-200 shadow-sm">
+                    <div className="px-5 pt-4 pb-1">
+                        <p className="text-sm font-semibold text-slate-700">Treasury Distribution</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Executed · Reserved · Released</p>
+                    </div>
+                    <div className="px-5 pb-5">
+                        {pieData.length === 0 ? <EmptyChart /> : (
+                            <ResponsiveContainer width="100%" height={210}>
+                                <PieChart>
+                                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={54} outerRadius={82}
+                                        dataKey="value" paddingAngle={3}>
+                                        {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                                    </Pie>
+                                    <Tooltip formatter={currencyFormatter as never}
+                                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
+                                    <Legend iconType="circle" iconSize={8}
+                                        formatter={(value) => <span className="text-xs text-slate-600">{value}</span>} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
+                </Card>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                {/* Spend by Category — executed expenses only */}
                 <Card className="rounded-xl border border-slate-200 shadow-sm">
                     <div className="px-5 pt-4 pb-2">
                         <p className="text-sm font-semibold text-slate-700">Spend by Category</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Approved expenses only</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Executed expenses only</p>
                     </div>
                     <div className="px-5 pb-5">
                         {categoryData.length === 0 ? <EmptyChart /> : (
@@ -1000,11 +1054,11 @@ export default function StoreManagerReportPage() {
                     </div>
                 </Card>
 
-                {/* Monthly Trend */}
+                {/* Monthly Trend — executed spend, last 6 months */}
                 <Card className="rounded-xl border border-slate-200 shadow-sm">
                     <div className="px-5 pt-4 pb-2">
                         <p className="text-sm font-semibold text-slate-700">Monthly Trend</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Approved spend, last 6 months</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Executed spend, last 6 months</p>
                     </div>
                     <div className="px-5 pb-5">
                         {trendData.every((d) => d.amount === 0) ? <EmptyChart /> : (
@@ -1026,50 +1080,61 @@ export default function StoreManagerReportPage() {
             </div>
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION D — Approval Funnel + Pie
+                SECTION 3 — Executed Treasury Operations
+                ONLY status = 'approved': finalized debits, completed operations.
             ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Approval Funnel" />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                <Card className="rounded-xl border border-slate-200 shadow-sm">
-                    <div className="px-5 pt-4 pb-1">
-                        <p className="text-sm font-semibold text-slate-700">Expense Pipeline</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Breakdown by stage</p>
-                    </div>
-                    <div className="px-5 pb-2">
-                        <FunnelStep label="Draft" count={drafts.length} amount={draftTotal}
-                            color="#94a3b8" icon={<Receipt className="w-4 h-4" />} />
-                        <FunnelStep label="Submitted / In Review" count={pendingApprovalRows.length}
-                            amount={inReviewTotal} color="#f59e0b" icon={<Clock className="w-4 h-4" />} />
-                        <FunnelStep label="Approved" count={approved.length} amount={totalApproved}
-                            color="#22c55e" icon={<CheckCircle2 className="w-4 h-4" />} />
-                        <FunnelStep label="Rejected" count={rejected.length} amount={totalRejected}
-                            color="#ef4444" icon={<XCircle className="w-4 h-4" />} />
-                    </div>
-                </Card>
-
-                <Card className="rounded-xl border border-slate-200 shadow-sm">
-                    <div className="px-5 pt-4 pb-1">
-                        <p className="text-sm font-semibold text-slate-700">Amount Distribution</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Approved vs Pending vs Rejected</p>
-                    </div>
-                    <div className="px-5 pb-5">
-                        {pieData.length === 0 ? <EmptyChart /> : (
-                            <ResponsiveContainer width="100%" height={210}>
-                                <PieChart>
-                                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={54} outerRadius={82}
-                                        dataKey="value" paddingAngle={3}>
-                                        {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                                    </Pie>
-                                    <Tooltip formatter={currencyFormatter as never}
-                                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
-                                    <Legend iconType="circle" iconSize={8}
-                                        formatter={(value) => <span className="text-xs text-slate-600">{value}</span>} />
-                                </PieChart>
-                            </ResponsiveContainer>
-                        )}
-                    </div>
-                </Card>
-            </div>
+            {executed.length > 0 && (
+                <>
+                    <SectionHeading title="Executed Treasury Operations" />
+                    <Card className="rounded-xl border border-emerald-200 shadow-sm mb-8 overflow-hidden">
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-emerald-100">
+                            <div className="flex items-center gap-2">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-700">Completed Operations</p>
+                                    <p className="text-xs text-slate-400 mt-0.5">
+                                        Finalised debits · executed treasury operations · {formatCurrency(totalExecuted)} total
+                                    </p>
+                                </div>
+                            </div>
+                            <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full flex-shrink-0">
+                                {executed.length} operation{executed.length > 1 ? "s" : ""}
+                            </span>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="bg-emerald-50/60 border-b border-emerald-100">
+                                        {["Date", "Category", "Amount", "Receipt"].map((h) => (
+                                            <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {executed.map((e, i) => (
+                                        <tr key={e.id}
+                                            className={`border-b border-emerald-50 hover:bg-emerald-50/40 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-emerald-50/10"}`}>
+                                            <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{isoToLabel(e.created_at)}</td>
+                                            <td className="px-5 py-3 text-slate-700 font-medium">{e.categories?.name ?? "—"}</td>
+                                            <td className="px-5 py-3 font-semibold text-emerald-700 tabular-nums">{formatCurrency(e.amount)}</td>
+                                            <td className="px-5 py-3">
+                                                {e.receipt_url ? (
+                                                    <a href={e.receipt_url} target="_blank" rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 text-xs font-medium transition-colors">
+                                                        View <ExternalLink className="w-3 h-3" />
+                                                    </a>
+                                                ) : (
+                                                    <span className="text-slate-300 text-xs">—</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </Card>
+                </>
+            )}
 
             {/* ══════════════════════════════════════════════════════════════════
                 SECTION E — Rejection Insights (conditional)
@@ -1077,15 +1142,15 @@ export default function StoreManagerReportPage() {
             {rejected.length > 0 && (
                 <>
                     <SectionHeading title="Rejection Insights" />
-                    <Card className="rounded-xl border border-slate-200 shadow-sm mb-8 overflow-hidden">
+                    <Card className="rounded-xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
                         <div className="px-5 py-4 border-b border-slate-100">
-                            <p className="text-sm font-semibold text-slate-700">Top Rejection Categories</p>
-                            <p className="text-xs text-slate-400 mt-0.5">Expenses rejected at any stage</p>
+                            <p className="text-sm font-semibold text-slate-700">Released Reservations by Category</p>
+                            <p className="text-xs text-slate-400 mt-0.5">Rejected expenses — reservations released, exposure closed</p>
                         </div>
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="bg-slate-50 border-b border-slate-100">
-                                    {["Category", "Rejections", "Rejected Amount"].map((h) => (
+                                    {["Category", "Rejections", "Released Amount"].map((h) => (
                                         <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                                     ))}
                                 </tr>
@@ -1110,43 +1175,53 @@ export default function StoreManagerReportPage() {
             )}
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION F — Pending Approval Table (conditional)
+                SECTION 4 — Rejected Expenses
+                ONLY status = 'rejected': released reservations, closed exposure.
             ══════════════════════════════════════════════════════════════════ */}
-            {pendingApprovalRows.length > 0 && (
+            {rejected.length > 0 && (
                 <>
-                    <SectionHeading title="Awaiting Approval" />
-                    <Card className="rounded-xl border border-amber-200 shadow-sm mb-8 overflow-hidden" style={{ backgroundColor: "rgba(254,243,199,0.12)" }}>
-                        <div className="flex items-center justify-between px-5 py-4 border-b border-amber-100">
+                    <Card className="rounded-xl border border-red-200 shadow-sm mb-8 overflow-hidden">
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-red-100">
                             <div className="flex items-center gap-2">
-                                <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                                <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
                                 <div>
-                                    <p className="text-sm font-semibold text-slate-700">Pending Approval</p>
+                                    <p className="text-sm font-semibold text-slate-700">Rejected Expenses</p>
                                     <p className="text-xs text-slate-400 mt-0.5">
-                                        Submitted or awaiting cluster sign-off · {formatCurrency(inReviewTotal)} held
+                                        Released reservations · closed exposure · {formatCurrency(totalRejected)} returned to pool
                                     </p>
                                 </div>
                             </div>
-                            <span className="text-xs font-semibold text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full flex-shrink-0">
-                                {pendingApprovalRows.length} expense{pendingApprovalRows.length > 1 ? "s" : ""}
+                            <span className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 px-2.5 py-1 rounded-full flex-shrink-0">
+                                {rejected.length} rejected
                             </span>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="bg-amber-50/60 border-b border-amber-100">
-                                        {["Date", "Category", "Amount", "Status"].map((h) => (
+                                    <tr className="bg-red-50/60 border-b border-red-100">
+                                        {["Date", "Category", "Amount", "Status", "Receipt"].map((h) => (
                                             <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {pendingApprovalRows.map((e, i) => (
+                                    {rejected.map((e, i) => (
                                         <tr key={e.id}
-                                            className={`border-b border-amber-50 hover:bg-amber-50/50 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-amber-50/20"}`}>
+                                            className={`border-b border-red-50 hover:bg-red-50/40 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-red-50/10"}`}>
                                             <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{isoToLabel(e.created_at)}</td>
                                             <td className="px-5 py-3 text-slate-700 font-medium">{e.categories?.name ?? "—"}</td>
                                             <td className="px-5 py-3 font-semibold text-slate-900 tabular-nums">{formatCurrency(e.amount)}</td>
                                             <td className="px-5 py-3"><Badge status={e.status as never} /></td>
+                                            <td className="px-5 py-3">
+                                                {e.receipt_url ? (
+                                                    <a href={e.receipt_url} target="_blank" rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 text-xs font-medium transition-colors">
+                                                        View <ExternalLink className="w-3 h-3" />
+                                                    </a>
+                                                ) : (
+                                                    <span className="text-slate-300 text-xs">—</span>
+                                                )}
+                                            </td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -1271,18 +1346,16 @@ function LoadingState() {
             <div className="grid grid-cols-4 gap-4">
                 {[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-slate-100 rounded-xl" />)}
             </div>
-            <div className="grid grid-cols-3 gap-4">
-                {[...Array(3)].map((_, i) => <div key={i} className="h-24 bg-slate-100 rounded-xl" />)}
-            </div>
-            <div className="h-28 bg-slate-100 rounded-xl" />
             <div className="grid grid-cols-4 gap-4">
                 {[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-slate-100 rounded-xl" />)}
             </div>
-            <div className="grid grid-cols-3 gap-4">
-                {[...Array(3)].map((_, i) => <div key={i} className="h-56 bg-slate-100 rounded-xl" />)}
+            <div className="h-28 bg-slate-100 rounded-xl" />
+            <div className="h-40 bg-slate-100 rounded-xl" />
+            <div className="grid grid-cols-2 gap-4">
+                {[...Array(2)].map((_, i) => <div key={i} className="h-56 bg-slate-100 rounded-xl" />)}
             </div>
             <div className="grid grid-cols-2 gap-4">
-                {[...Array(2)].map((_, i) => <div key={i} className="h-48 bg-slate-100 rounded-xl" />)}
+                {[...Array(2)].map((_, i) => <div key={i} className="h-56 bg-slate-100 rounded-xl" />)}
             </div>
             <div className="h-64 bg-slate-100 rounded-xl" />
         </div>
