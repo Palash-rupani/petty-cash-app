@@ -21,7 +21,8 @@ import {
     TrendingUp, Wallet, Receipt, ArrowUpCircle, ExternalLink,
     Clock, XCircle, AlertTriangle, CheckCircle2, Store,
     ChevronRight, ShieldAlert, Activity, RefreshCw,
-    Landmark, ArrowDownCircle, Zap,
+    Landmark, ArrowDownCircle, Zap, TrendingDown, Eye,
+    BarChart3, PieChart, Target,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -53,20 +54,18 @@ interface TreasuryCredit {
     storeName: string;
 }
 
-// Per-store enriched treasury position — derived from expenses + ledger balances
 interface StoreTreasuryPosition {
     storeId: string;
     name: string;
     targetFloat: number;
-    balance: number;          // actualBalance (credits − debits)
-    reservedAmount: number;   // sum of active treasury_reservations
-    availableBalance: number; // balance − reservedAmount (primary liquidity metric)
+    balance: number;
+    reservedAmount: number;
+    availableBalance: number;
     pendingAmount: number;
     pendingCount: number;
     approved: number;
     rejected: number;
     expenseCount: number;
-    // oldest submitted expense in ms epoch (for aging)
     oldestSubmittedAt: number | null;
 }
 
@@ -135,14 +134,14 @@ function isDateInRange(dateStr: string, range: DateRangeFilter) {
 const currencyFmt = (v: number | string) =>
     formatCurrency(typeof v === "number" ? v : Number(v));
 
-// ─── Health badge ─────────────────────────────────────────────────────────────
+// ─── Treasury Health Badge ────────────────────────────────────────────────────
 
-function HealthBadge({ balance, targetFloat }: { balance: number; targetFloat: number }) {
+function TreasuryHealthBadge({ balance, targetFloat }: { balance: number; targetFloat: number }) {
     const health = getCashHealth(balance, targetFloat);
     const config = {
         healthy: { label: "Stable", dot: "bg-emerald-500", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-        low: { label: "Monitor Closely", dot: "bg-amber-500", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-        negative: { label: "Urgent Refill Needed", dot: "bg-red-500", cls: "bg-red-50 text-red-700 border-red-200" },
+        low: { label: "Monitor", dot: "bg-amber-500", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+        negative: { label: "Critical", dot: "bg-red-500", cls: "bg-red-50 text-red-700 border-red-200" },
     } as const;
     const { label, dot, cls } = config[health];
     return (
@@ -153,61 +152,70 @@ function HealthBadge({ balance, targetFloat }: { balance: number; targetFloat: n
     );
 }
 
-// ─── Reusable sub-components ──────────────────────────────────────────────────
+// ─── Page Components ──────────────────────────────────────────────────────────
 
 function PageShell({ children }: { children: React.ReactNode }) {
     return <div className="px-6 py-8 max-w-7xl mx-auto">{children}</div>;
 }
 
-function SectionHeading({ title }: { title: string }) {
+function SectionHeading({ title, icon, subtitle }: { title: string; icon?: React.ReactNode; subtitle?: string }) {
     return (
-        <div className="flex items-center gap-3 mb-4 mt-2">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest whitespace-nowrap">
-                {title}
-            </h2>
-            <div className="flex-1 h-px bg-slate-100" />
+        <div className="flex items-start gap-3 mb-5 mt-3">
+            {icon && <div className="text-slate-400 mt-0.5">{icon}</div>}
+            <div className="flex-1">
+                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-widest">
+                    {title}
+                </h2>
+                {subtitle && <p className="text-xs text-slate-400 mt-1">{subtitle}</p>}
+            </div>
         </div>
     );
 }
 
-function StatCard({
-    icon, bg, label, value, sub, subColor = "text-slate-400",
+function TreasuryStatCard({
+    icon, bg, label, value, sub, subColor = "text-slate-400", trend,
 }: {
     icon: React.ReactNode; bg: string; label: string;
-    value: string; sub?: string; subColor?: string;
+    value: string; sub?: string; subColor?: string; trend?: "up" | "down" | "neutral";
 }) {
     return (
-        <Card className="rounded-xl border border-slate-200 shadow-sm h-full">
+        <Card className="rounded-xl border border-slate-200 shadow-sm h-full hover:shadow-md transition-shadow">
             <CardContent className="pt-5 pb-5">
                 <div className="flex items-start gap-3">
-                    <div className={`p-2 rounded-lg ${bg} flex-shrink-0 mt-0.5`}>{icon}</div>
-                    <div className="min-w-0">
-                        <p className="text-xs font-medium text-slate-500 leading-tight">{label}</p>
-                        <p className="text-xl font-bold text-slate-900 mt-1 leading-tight tabular-nums">{value}</p>
-                        {sub && <p className={`text-xs mt-1 font-medium ${subColor}`}>{sub}</p>}
+                    <div className={`p-2.5 rounded-lg ${bg} flex-shrink-0 mt-0.5`}>{icon}</div>
+                    <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-slate-500 leading-tight uppercase tracking-wide">{label}</p>
+                        <p className="text-2xl font-bold text-slate-900 mt-1.5 leading-tight tabular-nums">{value}</p>
+                        {sub && <p className={`text-xs mt-1.5 font-medium ${subColor}`}>{sub}</p>}
                     </div>
+                    {trend && (
+                        <div className="flex-shrink-0">
+                            {trend === "up" && <TrendingUp className="w-4 h-4 text-emerald-500" />}
+                            {trend === "down" && <TrendingDown className="w-4 h-4 text-red-500" />}
+                            {trend === "neutral" && <Zap className="w-4 h-4 text-slate-300" />}
+                        </div>
+                    )}
                 </div>
             </CardContent>
         </Card>
     );
 }
 
-function PipelineStep({ label, count, amount, color, icon }: {
-    label: string; count: number; amount: number; color: string; icon: React.ReactNode;
+function RiskIndicator({
+    label, value, alert, color = "slate",
+}: {
+    label: string; value: string | number; alert?: boolean; color?: "red" | "amber" | "slate" | "emerald";
 }) {
+    const colorMap = {
+        red: "bg-red-50 border-red-200 text-red-900",
+        amber: "bg-amber-50 border-amber-200 text-amber-900",
+        slate: "bg-slate-50 border-slate-200 text-slate-700",
+        emerald: "bg-emerald-50 border-emerald-200 text-emerald-700",
+    };
     return (
-        <div className="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">
-            <div className="p-2 rounded-lg flex-shrink-0" style={{ backgroundColor: color + "18" }}>
-                <div style={{ color }}>{icon}</div>
-            </div>
-            <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-sm font-medium text-slate-700">{label}</span>
-                    <span className="text-sm font-bold text-slate-900 tabular-nums">{count}</span>
-                </div>
-                <span className="text-xs text-slate-400">{formatCurrency(amount)}</span>
-            </div>
-            <ChevronRight className="w-4 h-4 text-slate-200 flex-shrink-0" />
+        <div className={`rounded-lg border p-3 ${colorMap[color]}`}>
+            <p className="text-xs font-medium opacity-75">{label}</p>
+            <p className={`text-lg font-bold mt-1 ${alert ? "text-red-700" : ""}`}>{value}</p>
         </div>
     );
 }
@@ -226,7 +234,7 @@ function LoadingState() {
             <div className="h-8 w-56 bg-slate-100 rounded-lg" />
             <div className="h-12 bg-slate-100 rounded-xl" />
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4">
-                {[...Array(6)].map((_, i) => <div key={i} className="h-24 bg-slate-100 rounded-xl" />)}
+                {[...Array(6)].map((_, i) => <div key={i} className="h-28 bg-slate-100 rounded-xl" />)}
             </div>
             <div className="h-48 bg-slate-100 rounded-xl" />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -237,9 +245,9 @@ function LoadingState() {
     );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Main Treasury Intelligence Dashboard ─────────────────────────────────────
 
-export default function ClusterReportsPage() {
+export default function ClusterTreasuryDashboard() {
     const { user, loading: authLoading } = useAuth();
     const supabase = createClient();
 
@@ -247,16 +255,14 @@ export default function ClusterReportsPage() {
     const [expenses, setExpenses] = useState<Expense[]>([]);
     const [rawTrendData, setRawTrendData] = useState<{ amount: number, expense_month: string | null, created_at: string, status: string, store_id: string }[]>([]);
     const [treasuryCredits, setTreasuryCredits] = useState<TreasuryCredit[]>([]);
-    // null = not yet fetched; Record<storeId, actualBalance> once loaded
     const [balanceMap, setBalanceMap] = useState<Record<string, number> | null>(null);
-    // Record<storeId, reservedAmount> — sum of active treasury_reservations per store
     const [reservedMap, setReservedMap] = useState<Record<string, number>>({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     const { filters, setFilter } = useDashboardFilters();
 
-    // ── Fetch stores + all cluster expenses ──────────────────────────────────
+    // ── Data Fetching ──────────────────────────────────────────────────────
     useEffect(() => {
         if (!user?.cluster_id) return;
         setLoading(true);
@@ -273,7 +279,6 @@ export default function ClusterReportsPage() {
                 const storeIds = rows.map((s) => s.id);
                 if (storeIds.length === 0) { setExpenses([]); setLoading(false); return; }
 
-                // Fetch expenses + available balances + recent credits in parallel
                 const [expResult, balances, creditsResult] = await Promise.all([
                     supabase
                         .from("expenses")
@@ -304,7 +309,6 @@ export default function ClusterReportsPage() {
                 })) as Expense[];
                 setExpenses(normalised);
 
-                // Build actual balance and reservation lookup maps
                 const actualMap: Record<string, number> = {};
                 const resMap: Record<string, number> = {};
                 balances.forEach(({ storeId, actualBalance, reservedAmount }) => {
@@ -330,7 +334,7 @@ export default function ClusterReportsPage() {
             });
     }, [user?.cluster_id]);
 
-    // ── Fetch 6-month approved trend ─────────────────────────────────────────
+    // ── 6-Month Trend ──────────────────────────────────────────────────────
     useEffect(() => {
         if (!user?.cluster_id) return;
         const sixAgo = new Date();
@@ -357,10 +361,8 @@ export default function ClusterReportsPage() {
             });
     }, [user?.cluster_id]);
 
-    // ── Apply Filters ─────────────────────────────────────────────────────────
+    // ── Filtering Logic ────────────────────────────────────────────────────
 
-    // 1. Current State Filtering (Ignores Date Range)
-    //    Health is evaluated against availableBalance (= actual − reserved)
     const activeStoreIds = useMemo(() => {
         return stores.filter((s) => {
             if (filters.selectedStores.length > 0 && !filters.selectedStores.includes(s.id)) return false;
@@ -374,7 +376,6 @@ export default function ClusterReportsPage() {
         }).map((s) => s.id);
     }, [stores, filters.selectedStores, filters.treasuryHealth, balanceMap, reservedMap]);
 
-    // 2. Time-Scoped Analytics Filtering (Respects Date Range & Stores)
     const filteredExpenses = useMemo(() => {
         return expenses.filter((e) => {
             if (!activeStoreIds.includes(e.store_id)) return false;
@@ -389,7 +390,6 @@ export default function ClusterReportsPage() {
         });
     }, [treasuryCredits, activeStoreIds, filters.dateRange]);
 
-    // 3. Trend Data Filtering (Ignores Date Range, Respects Stores)
     const trendData = useMemo(() => {
         const map: Record<string, number> = {};
         rawTrendData.forEach((e) => {
@@ -408,32 +408,26 @@ export default function ClusterReportsPage() {
         return months;
     }, [rawTrendData, activeStoreIds]);
 
-    // ── Derived: expense buckets ──────────────────────────────────────────────
+    // ── Expense Status Buckets ─────────────────────────────────────────────
 
     const approved = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "approved"), [filteredExpenses]);
     const pending = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "submitted"), [filteredExpenses]);
     const rejected = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "rejected"), [filteredExpenses]);
     const submitted = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "submitted"), [filteredExpenses]);
     const acctPend = useMemo(() => filteredExpenses.filter((e) => ACCT_PENDING.includes(e.status)), [filteredExpenses]);
-    const clRejected = useMemo(() => filteredExpenses.filter((e) => e.status === "cluster_rejected"), [filteredExpenses]);
 
     const totalApproved = useMemo(() => sumAmount(approved), [approved]);
     const totalPending = useMemo(() => sumAmount(pending), [pending]);
     const totalRejected = useMemo(() => sumAmount(rejected), [rejected]);
-    const largestExpense = useMemo(
-        () => (filteredExpenses.length ? Math.max(...filteredExpenses.map((e) => e.amount)) : 0),
-        [filteredExpenses]
-    );
     const storeCount = useMemo(() => activeStoreIds.length, [activeStoreIds]);
 
-    // ── Derived: per-store treasury positions (Current state + filtered analytics)
+    // ── Treasury Positions ─────────────────────────────────────────────────
 
     const storeTreasuryPositions = useMemo<StoreTreasuryPosition[]>(() => {
         if (balanceMap === null) return [];
 
         const posMap: Record<string, StoreTreasuryPosition> = {};
 
-        // Seed from ACTIVE stores only
         stores.filter(s => activeStoreIds.includes(s.id)).forEach((s) => {
             const actual = balanceMap[s.id] ?? 0;
             const reserved = reservedMap[s.id] ?? 0;
@@ -453,7 +447,6 @@ export default function ClusterReportsPage() {
             };
         });
 
-        // Accumulate expense data from filtered expenses
         filteredExpenses.forEach((e) => {
             const pos = posMap[e.store_id];
             if (!pos) return;
@@ -472,24 +465,26 @@ export default function ClusterReportsPage() {
             }
         });
 
-        return Object.values(posMap).sort((a, b) => a.availableBalance - b.availableBalance); // worst first
+        return Object.values(posMap).sort((a, b) => a.availableBalance - b.availableBalance);
     }, [stores, activeStoreIds, filteredExpenses, balanceMap, reservedMap]);
 
-    // ── Treasury KPI aggregates ───────────────────────────────────────────────
+    // ── Treasury KPI Aggregates ────────────────────────────────────────────
 
-    // Primary liquidity = sum of available balances (actual − reserved per store)
     const clusterLiquidity = useMemo(
         () => storeTreasuryPositions.reduce((s, p) => s + p.availableBalance, 0),
         [storeTreasuryPositions]
     );
 
-    // Total actual balance — used as denominator for exposure % calculations
     const totalActualLiquidity = useMemo(
         () => storeTreasuryPositions.reduce((s, p) => s + p.balance, 0),
         [storeTreasuryPositions]
     );
 
-    // Stores where availableBalance health is not "healthy"
+    const totalReserved = useMemo(
+        () => storeTreasuryPositions.reduce((s, p) => s + p.reservedAmount, 0),
+        [storeTreasuryPositions]
+    );
+
     const storesAtRisk = useMemo(
         () => storeTreasuryPositions.filter(
             (p) => getCashHealth(p.availableBalance, p.targetFloat) !== "healthy"
@@ -497,7 +492,6 @@ export default function ClusterReportsPage() {
         [storeTreasuryPositions]
     );
 
-    // Refill needed is based on availableBalance vs targetFloat
     const totalRefillNeeded = useMemo(
         () => storeTreasuryPositions.reduce(
             (s, p) => s + getRefillRecommendation(p.availableBalance, p.targetFloat), 0
@@ -505,15 +499,18 @@ export default function ClusterReportsPage() {
         [storeTreasuryPositions]
     );
 
-    // Total pending exposure as % of actual cluster balance
     const pendingExposurePct = useMemo<number | null>(() => {
         if (totalActualLiquidity <= 0) return null;
         return (totalPending / totalActualLiquidity) * 100;
     }, [totalPending, totalActualLiquidity]);
 
-    // ── Attention flags ───────────────────────────────────────────────────────
+    const liquidityCoverageRatio = useMemo(() => {
+        if (totalApproved === 0) return null;
+        return (clusterLiquidity / totalApproved * 100);
+    }, [clusterLiquidity, totalApproved]);
 
-    // Negative / low based on availableBalance — the real operational signal
+    // ── Risk Flags ─────────────────────────────────────────────────────────
+
     const negativeStores = useMemo(
         () => storeTreasuryPositions.filter((p) => p.availableBalance < 0),
         [storeTreasuryPositions]
@@ -526,7 +523,6 @@ export default function ClusterReportsPage() {
         [storeTreasuryPositions]
     );
 
-    // Stores where pending (expense-derived) > 50% of actual balance
     const highExposureStores = useMemo(
         () => storeTreasuryPositions.filter(
             (p) => p.balance > 0 && p.pendingAmount / p.balance > 0.5
@@ -534,7 +530,6 @@ export default function ClusterReportsPage() {
         [storeTreasuryPositions]
     );
 
-    // Stores with oldest submitted expense > 5 days
     const bottleneckStores = useMemo(
         () => storeTreasuryPositions
             .filter((p) => p.oldestSubmittedAt !== null &&
@@ -553,7 +548,7 @@ export default function ClusterReportsPage() {
         highExposureStores.length > 0 ||
         bottleneckStores.length > 0;
 
-    // ── Approval aging (all submitted expenses > 5 days) ─────────────────────
+    // ── Aging Approvals ───────────────────────────────────────────────────
 
     const agingApprovals = useMemo(
         () => submitted
@@ -562,7 +557,7 @@ export default function ClusterReportsPage() {
         [submitted]
     );
 
-    // ── Chart data (existing derivations preserved) ───────────────────────────
+    // ── Chart Data ─────────────────────────────────────────────────────────
 
     const storeBreakdown = useMemo(() => {
         const map: Record<string, {
@@ -601,6 +596,14 @@ export default function ClusterReportsPage() {
             .sort((a, b) => b.value - a.value).slice(0, 8);
     }, [approved]);
 
+    const storeComparisonChart = useMemo(
+        () => storeBreakdown.slice(0, 7).map((s) => ({
+            name: s.name.length > 12 ? s.name.slice(0, 12) + "…" : s.name,
+            Approved: s.approved, Pending: s.pending, Rejected: s.rejected,
+        })),
+        [storeBreakdown]
+    );
+
     const rejectionByCategory = useMemo(() => {
         const map: Record<string, { count: number; total: number }> = {};
         rejected.forEach((e) => {
@@ -612,38 +615,7 @@ export default function ClusterReportsPage() {
             .sort((a, b) => b.count - a.count).slice(0, 6);
     }, [rejected]);
 
-    const rejectionByStore = useMemo(
-        () => storeBreakdown.filter((s) => s.rejected > 0)
-            .map((s) => ({ name: s.name, rejected: s.rejected }))
-            .sort((a, b) => b.rejected - a.rejected).slice(0, 6),
-        [storeBreakdown]
-    );
-
-    const highRejectionStores = useMemo(() => {
-        const rejCountMap: Record<string, number> = {};
-        const totalCountMap: Record<string, number> = {};
-        filteredExpenses.forEach((e) => {
-            totalCountMap[e.store_id] = (totalCountMap[e.store_id] ?? 0) + 1;
-            if (normalizeExpenseStatus(e.status as any) === "rejected")
-                rejCountMap[e.store_id] = (rejCountMap[e.store_id] ?? 0) + 1;
-        });
-        return storeBreakdown.filter((s) => {
-            const sid = filteredExpenses.find((e) => e.stores?.name === s.name)?.store_id ?? "";
-            const rej = rejCountMap[sid] ?? 0;
-            const tot = totalCountMap[sid] ?? 0;
-            return tot >= 3 && rej / tot > 0.3;
-        });
-    }, [storeBreakdown, filteredExpenses]);
-
-    const storeComparisonChart = useMemo(
-        () => storeBreakdown.slice(0, 7).map((s) => ({
-            name: s.name.length > 12 ? s.name.slice(0, 12) + "…" : s.name,
-            Approved: s.approved, Pending: s.pending, Rejected: s.rejected,
-        })),
-        [storeBreakdown]
-    );
-
-    // ── Guards ───────────────────────────────────────────────────────────────
+    // ── Guards ─────────────────────────────────────────────────────────────
 
     if (authLoading) return <PageShell><LoadingState /></PageShell>;
     if (!user || user.role !== "cluster_manager") {
@@ -659,55 +631,78 @@ export default function ClusterReportsPage() {
     if (error) return <PageShell><p className="text-red-500 p-6 text-sm">{error}</p></PageShell>;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Render
+    // RENDER — Treasury Intelligence Dashboard
     // ─────────────────────────────────────────────────────────────────────────
 
     return (
         <PageShell>
 
-            {/* ── Header ─────────────────────────────────────────────────────── */}
-            <div className="mb-6 flex justify-between items-end">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Cluster Report</h1>
-                    <p className="text-sm text-slate-500 mt-1">
-                        Regional treasury monitoring across all stores in your cluster
-                    </p>
+            {/* ══════════════════════════════════════════════════════════════════
+                HEADER
+            ══════════════════════════════════════════════════════════════════ */}
+            <div className="mb-8">
+                <div className="flex items-center gap-3 mb-2">
+                    <Landmark className="w-6 h-6 text-indigo-600" />
+                    <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Treasury Intelligence</h1>
                 </div>
+                <p className="text-sm text-slate-500 ml-9">
+                    Cluster-wide liquidity monitoring, risk analytics, and treasury insights
+                </p>
             </div>
 
             <DashboardFilterBar filters={filters} setFilter={setFilter} stores={stores} />
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION A — Treasury KPIs (ledger-driven)
+                SECTION 1: EXECUTIVE TREASURY OVERVIEW
+                Core liquidity KPIs focused on treasury metrics
             ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Overview" />
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
-                <StatCard
-                    icon={<Landmark className="w-4 h-4 text-indigo-600" />} bg="bg-indigo-50"
+            <SectionHeading
+                title="Executive Overview"
+                icon={<Eye className="w-4 h-4" />}
+                subtitle="Cluster liquidity position, reserved exposure, and refill obligations"
+            />
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 mb-10">
+                <TreasuryStatCard
+                    icon={<Landmark className="w-4 h-4 text-indigo-600" />}
+                    bg="bg-indigo-50"
                     label="Available Liquidity"
                     value={formatCurrency(clusterLiquidity)}
-                    sub="Available balance, active stores"
+                    sub="Operational cash"
                     subColor={clusterLiquidity < 0 ? "text-red-600" : "text-slate-400"}
+                    trend={clusterLiquidity >= totalApproved ? "up" : clusterLiquidity < 0 ? "down" : "neutral"}
                 />
-                <StatCard
-                    icon={<ShieldAlert className="w-4 h-4 text-red-500" />} bg="bg-red-50"
+                <TreasuryStatCard
+                    icon={<Wallet className="w-4 h-4 text-cyan-600" />}
+                    bg="bg-cyan-50"
+                    label="Reserved Exposure"
+                    value={formatCurrency(totalReserved)}
+                    sub="Pending reservations"
+                    subColor="text-slate-400"
+                />
+                <TreasuryStatCard
+                    icon={<RefreshCw className="w-4 h-4 text-amber-600" />}
+                    bg="bg-amber-50"
+                    label="Refill Required"
+                    value={totalRefillNeeded > 0 ? formatCurrency(totalRefillNeeded) : "None"}
+                    sub="To restore floats"
+                    subColor={totalRefillNeeded > 0 ? "text-amber-600" : "text-emerald-600"}
+                    trend={totalRefillNeeded > 0 ? "down" : "up"}
+                />
+                <TreasuryStatCard
+                    icon={<ShieldAlert className="w-4 h-4 text-red-500" />}
+                    bg="bg-red-50"
                     label="Stores at Risk"
                     value={String(storesAtRisk)}
-                    sub={storesAtRisk > 0 ? "Low or negative balance" : "All stores healthy"}
+                    sub={storesAtRisk > 0 ? "Below target float" : "All stable"}
                     subColor={storesAtRisk > 0 ? "text-red-600" : "text-emerald-600"}
+                    trend={storesAtRisk > 0 ? "down" : "up"}
                 />
-                <StatCard
-                    icon={<RefreshCw className="w-4 h-4 text-amber-600" />} bg="bg-amber-50"
-                    label="Total Refill Needed"
-                    value={totalRefillNeeded > 0 ? formatCurrency(totalRefillNeeded) : "None"}
-                    sub="To restore all stores to float"
-                    subColor={totalRefillNeeded > 0 ? "text-amber-600" : "text-emerald-600"}
-                />
-                <StatCard
-                    icon={<Clock className="w-4 h-4 text-orange-500" />} bg="bg-orange-50"
+                <TreasuryStatCard
+                    icon={<BarChart3 className="w-4 h-4 text-orange-600" />}
+                    bg="bg-orange-50"
                     label="Pending Exposure"
                     value={pendingExposurePct !== null ? `${pendingExposurePct.toFixed(0)}%` : "—"}
-                    sub={`${formatCurrency(totalPending)} of cluster cash`}
+                    sub={`${formatCurrency(totalPending)} locked`}
                     subColor={
                         pendingExposurePct !== null && pendingExposurePct > 60
                             ? "text-red-600"
@@ -716,81 +711,61 @@ export default function ClusterReportsPage() {
                                 : "text-slate-400"
                     }
                 />
-                <StatCard
-                    icon={<ArrowUpCircle className="w-4 h-4 text-emerald-600" />} bg="bg-emerald-50"
-                    label="Recent Top-Ups"
-                    value={String(filteredCredits.length)}
-                    sub="Credit events fetched"
-                />
-                <StatCard
-                    icon={<Store className="w-4 h-4 text-cyan-600" />} bg="bg-cyan-50"
-                    label="Stores in Cluster"
+                <TreasuryStatCard
+                    icon={<Store className="w-4 h-4 text-emerald-600" />}
+                    bg="bg-emerald-50"
+                    label="Cluster Stores"
                     value={String(storeCount)}
+                    sub="Active monitored"
+                    subColor="text-slate-400"
                 />
-            </div>
-
-            {/* ── Legacy approval KPIs row (preserved) ─────────────────────── */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-                <StatCard
-                    icon={<Activity className="w-4 h-4 text-blue-500" />} bg="bg-blue-50"
-                    label="Submitted (Awaiting You)" value={String(submitted.length)}
-                    sub={formatCurrency(sumAmount(submitted))} subColor="text-blue-600" />
-                <StatCard
-                    icon={<CheckCircle2 className="w-4 h-4 text-teal-500" />} bg="bg-teal-50"
-                    label="Approved" value={String(acctPend.length)}
-                    sub="Awaiting accounting record" subColor="text-teal-600" />
-                <StatCard
-                    icon={<XCircle className="w-4 h-4 text-orange-500" />} bg="bg-orange-50"
-                    label="Cluster Rejected" value={String(clRejected.length)}
-                    sub={formatCurrency(sumAmount(clRejected))} subColor="text-orange-600" />
-                <StatCard
-                    icon={<TrendingUp className="w-4 h-4 text-emerald-600" />} bg="bg-emerald-50"
-                    label="Fully Approved" value={String(approved.length)}
-                    sub={formatCurrency(totalApproved)} subColor="text-emerald-600" />
             </div>
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION B — Attention Required
-                Only rendered when there are items needing intervention.
+                SECTION 2: TREASURY RISK & STABILITY ALERTS
+                Primary operational intelligence layer
             ══════════════════════════════════════════════════════════════════ */}
             {hasAttentionItems && (
                 <>
-                    <SectionHeading title="Attention Required" />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                    <SectionHeading
+                        title="Risk & Stability Alerts"
+                        icon={<AlertTriangle className="w-4 h-4" />}
+                        subtitle="Critical items requiring treasury intervention"
+                    />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10">
 
-                        {/* Liquidity alerts */}
+                        {/* Liquidity Crisis */}
                         {(negativeStores.length > 0 || lowLiquidityStores.length > 0) && (
-                            <Card className="rounded-xl border border-red-200 shadow-sm overflow-hidden"
-                                style={{ backgroundColor: "rgba(254,242,242,0.4)" }}>
-                                <div className="flex items-center gap-2 px-5 py-4 border-b border-red-100">
-                                    <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                                    <p className="text-sm font-semibold text-slate-700">Liquidity Alerts</p>
-                                    <span className="ml-auto text-xs font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">
-                                        {negativeStores.length + lowLiquidityStores.length} store{negativeStores.length + lowLiquidityStores.length !== 1 ? "s" : ""}
+                            <Card className="rounded-xl border-2 border-red-300 shadow-md overflow-hidden bg-gradient-to-br from-red-50 to-white">
+                                <div className="flex items-center gap-2 px-5 py-4 border-b border-red-200 bg-red-50/60">
+                                    <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0" />
+                                    <p className="text-sm font-bold text-slate-800">Liquidity Crisis</p>
+                                    <span className="ml-auto text-xs font-bold text-white bg-red-600 px-2.5 py-1 rounded-full">
+                                        {negativeStores.length + lowLiquidityStores.length}
                                     </span>
                                 </div>
-                                <div className="divide-y divide-red-50">
+                                <div className="divide-y divide-red-100">
                                     {negativeStores.map((p) => (
-                                        <div key={p.storeId} className="flex items-center justify-between px-5 py-3">
+                                        <div key={p.storeId} className="flex items-center justify-between px-5 py-3 bg-red-50/50 hover:bg-red-100/30">
                                             <div>
-                                                <p className="text-sm font-medium text-slate-800">{p.name}</p>
-                                                <p className="text-xs text-red-600 mt-0.5">Negative available balance</p>
+                                                <p className="text-sm font-bold text-slate-800">{p.name}</p>
+                                                <p className="text-xs text-red-700 mt-0.5 font-semibold">⚠️ Negative balance — immediate action required</p>
                                             </div>
-                                            <div className="text-right">
-                                                <p className="text-sm font-bold text-red-600 tabular-nums">{formatCurrency(p.availableBalance)}</p>
-                                                <p className="text-xs text-slate-400 mt-0.5">Refill: {formatCurrency(getRefillRecommendation(p.availableBalance, p.targetFloat))}</p>
+                                            <div className="text-right flex-shrink-0">
+                                                <p className="text-sm font-bold text-red-700 tabular-nums">{formatCurrency(p.availableBalance)}</p>
+                                                <p className="text-xs text-slate-500 mt-0.5 font-semibold">Inject: {formatCurrency(getRefillRecommendation(p.availableBalance, p.targetFloat))}</p>
                                             </div>
                                         </div>
                                     ))}
                                     {lowLiquidityStores.map((p) => (
-                                        <div key={p.storeId} className="flex items-center justify-between px-5 py-3">
+                                        <div key={p.storeId} className="flex items-center justify-between px-5 py-3 bg-amber-50/50 hover:bg-amber-100/30">
                                             <div>
                                                 <p className="text-sm font-medium text-slate-800">{p.name}</p>
-                                                <p className="text-xs text-amber-600 mt-0.5">Low available cash — below 25% of float</p>
+                                                <p className="text-xs text-amber-700 mt-0.5">Low cash — below 25% of target</p>
                                             </div>
-                                            <div className="text-right">
-                                                <p className="text-sm font-bold text-amber-600 tabular-nums">{formatCurrency(p.availableBalance)}</p>
-                                                <p className="text-xs text-slate-400 mt-0.5">Refill: {formatCurrency(getRefillRecommendation(p.availableBalance, p.targetFloat))}</p>
+                                            <div className="text-right flex-shrink-0">
+                                                <p className="text-sm font-bold text-amber-700 tabular-nums">{formatCurrency(p.availableBalance)}</p>
+                                                <p className="text-xs text-slate-500 mt-0.5">Inject: {formatCurrency(getRefillRecommendation(p.availableBalance, p.targetFloat))}</p>
                                             </div>
                                         </div>
                                     ))}
@@ -798,36 +773,33 @@ export default function ClusterReportsPage() {
                             </Card>
                         )}
 
-                        {/* High exposure + bottleneck alerts */}
+                        {/* Operational Flags */}
                         {(highExposureStores.length > 0 || bottleneckStores.length > 0) && (
-                            <Card className="rounded-xl border border-amber-200 shadow-sm overflow-hidden"
-                                style={{ backgroundColor: "rgba(254,243,199,0.25)" }}>
-                                <div className="flex items-center gap-2 px-5 py-4 border-b border-amber-100">
-                                    <Zap className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                                    <p className="text-sm font-semibold text-slate-700">Operational Flags</p>
+                            <Card className="rounded-xl border-2 border-amber-300 shadow-md overflow-hidden bg-gradient-to-br from-amber-50 to-white">
+                                <div className="flex items-center gap-2 px-5 py-4 border-b border-amber-200 bg-amber-50/60">
+                                    <Zap className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                                    <p className="text-sm font-bold text-slate-800">Operational Flags</p>
                                 </div>
-                                <div className="divide-y divide-amber-50">
+                                <div className="divide-y divide-amber-100">
                                     {highExposureStores.map((p) => (
-                                        <div key={p.storeId} className="flex items-center justify-between px-5 py-3">
+                                        <div key={p.storeId} className="flex items-center justify-between px-5 py-3 hover:bg-amber-50/50">
                                             <div>
                                                 <p className="text-sm font-medium text-slate-800">{p.name}</p>
-                                                <p className="text-xs text-amber-700 mt-0.5">
-                                                    High pending exposure — {((p.pendingAmount / p.balance) * 100).toFixed(0)}% of cash locked
+                                                <p className="text-xs text-amber-700 mt-0.5 font-semibold">
+                                                    High pending exposure — {((p.pendingAmount / p.balance) * 100).toFixed(0)}% of balance locked
                                                 </p>
                                             </div>
-                                            <p className="text-sm font-bold text-amber-600 tabular-nums">{formatCurrency(p.pendingAmount)}</p>
+                                            <p className="text-sm font-bold text-amber-700 tabular-nums flex-shrink-0">{formatCurrency(p.pendingAmount)}</p>
                                         </div>
                                     ))}
                                     {bottleneckStores.map((p) => (
-                                        <div key={p.storeId} className="flex items-center justify-between px-5 py-3">
+                                        <div key={p.storeId} className="flex items-center justify-between px-5 py-3 hover:bg-orange-50/50">
                                             <div>
                                                 <p className="text-sm font-medium text-slate-800">{p.name}</p>
-                                                <p className="text-xs text-orange-600 mt-0.5">
-                                                    Approval stalled — oldest submission {p.oldestDays}d ago
-                                                </p>
+                                                <p className="text-xs text-orange-700 mt-0.5 font-semibold">Approval stalled — oldest {p.oldestDays}d ago</p>
                                             </div>
-                                            <span className="text-xs font-semibold text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full">
-                                                {p.pendingCount} pending
+                                            <span className="text-xs font-bold text-orange-700 bg-orange-100 px-2.5 py-1 rounded-full flex-shrink-0">
+                                                {p.pendingCount} items
                                             </span>
                                         </div>
                                     ))}
@@ -840,33 +812,26 @@ export default function ClusterReportsPage() {
             )}
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION C — Treasury Risk Matrix
-                One row per store with live ledger balance + health + refill.
+                SECTION 3: TREASURY POSITION ANALYTICS
+                Per-store ledger balance, health, refill analysis
             ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Treasury Risk Matrix" />
-            <Card className="rounded-xl border border-slate-200 shadow-sm mb-8 overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-                    <div>
-                        <p className="text-sm font-semibold text-slate-700">Store Positions</p>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                            Ledger balance · treasury health · refill required · sorted by liquidity
-                        </p>
-                    </div>
-                    {balanceMap === null && (
-                        <span className="text-xs text-slate-400 italic">Loading balances…</span>
-                    )}
-                </div>
+            <SectionHeading
+                title="Treasury Position Matrix"
+                icon={<Target className="w-4 h-4" />}
+                subtitle="Store-by-store liquidity health, reserves, and refill recommendations"
+            />
+            <Card className="rounded-xl border border-slate-200 shadow-md mb-10 overflow-hidden">
                 {storeTreasuryPositions.length === 0 ? (
-                    <div className="flex items-center justify-center h-28 text-slate-400 text-sm">
+                    <div className="flex items-center justify-center h-28 text-slate-400 text-sm py-8">
                         {loading ? "Loading…" : "No store data."}
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="bg-slate-50 border-b border-slate-100">
-                                    {["Store", "Available Balance", "Treasury Health", "Pending", "Refill Needed", "Status"].map((h) => (
-                                        <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                                <tr className="bg-slate-50 border-b border-slate-200">
+                                    {["Store", "Available", "Reserved", "Health", "Pending", "Refill", "Ops Status"].map((h) => (
+                                        <th key={h} className="text-left px-5 py-3 text-xs font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap">{h}</th>
                                     ))}
                                 </tr>
                             </thead>
@@ -877,49 +842,60 @@ export default function ClusterReportsPage() {
                                     const isNeg = pos.availableBalance < 0;
                                     return (
                                         <tr key={pos.storeId}
-                                            className={`border-b border-slate-50 transition-colors ${isNeg ? "bg-red-50/30 hover:bg-red-50/50"
-                                                : health === "low" ? "bg-amber-50/20 hover:bg-amber-50/40"
-                                                    : i % 2 === 0 ? "bg-white hover:bg-slate-50/70"
-                                                        : "bg-slate-50/30 hover:bg-slate-50/70"
+                                            className={`border-b border-slate-100 transition-colors ${isNeg ? "bg-red-50/40 hover:bg-red-50/60" :
+                                                    health === "low" ? "bg-amber-50/20 hover:bg-amber-50/40" :
+                                                        i % 2 === 0 ? "bg-white hover:bg-slate-50" :
+                                                            "bg-slate-50/40 hover:bg-slate-50/70"
                                                 }`}>
-                                            <td className="px-5 py-3 font-medium text-slate-800 whitespace-nowrap">{pos.name}</td>
+                                            <td className="px-5 py-3 font-semibold text-slate-800">{pos.name}</td>
                                             <td className="px-5 py-3 whitespace-nowrap">
-                                                <p className={`font-bold tabular-nums ${isNeg ? "text-red-600" : "text-slate-900"}`}>
+                                                <p className={`font-bold tabular-nums text-lg ${isNeg ? "text-red-700" : "text-slate-900"}`}>
                                                     {formatCurrency(pos.availableBalance)}
                                                 </p>
-                                                {pos.reservedAmount > 0 && (
-                                                    <p className="text-xs text-amber-600 mt-0.5 tabular-nums">
-                                                        {formatCurrency(pos.reservedAmount)} reserved
-                                                    </p>
+                                                {pos.balance !== pos.availableBalance && (
+                                                    <p className="text-xs text-slate-400 mt-0.5">actual: {formatCurrency(pos.balance)}</p>
                                                 )}
                                             </td>
                                             <td className="px-5 py-3">
-                                                <HealthBadge balance={pos.availableBalance} targetFloat={pos.targetFloat} />
+                                                {pos.reservedAmount > 0 ? (
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-amber-700">{formatCurrency(pos.reservedAmount)}</p>
+                                                        <p className="text-xs text-slate-400 mt-0.5">reserved</p>
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-xs text-slate-300">—</p>
+                                                )}
+                                            </td>
+                                            <td className="px-5 py-3">
+                                                <TreasuryHealthBadge balance={pos.availableBalance} targetFloat={pos.targetFloat} />
                                             </td>
                                             <td className="px-5 py-3 text-slate-600 tabular-nums">
                                                 {pos.pendingCount > 0 ? (
-                                                    <span>
-                                                        <span className="font-semibold text-amber-700">{pos.pendingCount}</span>
-                                                        <span className="text-slate-400"> · {formatCurrency(pos.pendingAmount)}</span>
-                                                    </span>
+                                                    <div>
+                                                        <p className="text-xs font-bold text-amber-700">{pos.pendingCount} items</p>
+                                                        <p className="text-xs text-slate-400 mt-0.5">{formatCurrency(pos.pendingAmount)}</p>
+                                                    </div>
                                                 ) : (
-                                                    <span className="text-slate-300">—</span>
+                                                    <p className="text-xs text-slate-300">—</p>
                                                 )}
                                             </td>
                                             <td className="px-5 py-3 tabular-nums">
                                                 {refill ? (
-                                                    <span className="font-semibold text-amber-700">{formatCurrency(refill)}</span>
+                                                    <div>
+                                                        <p className="text-xs font-bold text-amber-700">{formatCurrency(refill)}</p>
+                                                        <p className="text-xs text-slate-400 mt-0.5">inject</p>
+                                                    </div>
                                                 ) : (
-                                                    <span className="text-emerald-600 font-medium text-xs">Sufficient</span>
+                                                    <p className="text-xs text-emerald-600 font-semibold">✓ Sufficient</p>
                                                 )}
                                             </td>
                                             <td className="px-5 py-3">
                                                 {pos.oldestSubmittedAt !== null && Date.now() - pos.oldestSubmittedAt > 5 * 24 * 60 * 60 * 1000 ? (
-                                                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-700 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full">
+                                                    <span className="inline-flex items-center gap-1 text-xs font-bold text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full">
                                                         <Clock className="w-3 h-3" /> Stalled
                                                     </span>
                                                 ) : pos.availableBalance >= 0 && !refill ? (
-                                                    <span className="text-xs text-emerald-600 font-medium">Operational</span>
+                                                    <span className="text-xs text-emerald-600 font-semibold">Operational</span>
                                                 ) : (
                                                     <span className="text-xs text-slate-400">Active</span>
                                                 )}
@@ -934,30 +910,92 @@ export default function ClusterReportsPage() {
             </Card>
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION D — Approval Bottlenecks + Recent Treasury Top-Ups
+                SECTION 4: LIQUIDITY & EXPOSURE ANALYTICS
+                Charts focused on treasury concentration and approval impact
             ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Approval Bottlenecks &amp; Treasury Activity" />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <SectionHeading
+                title="Liquidity & Approval Exposure"
+                icon={<BarChart3 className="w-4 h-4" />}
+                subtitle="6-month trends, store performance, and category analysis"
+            />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10">
 
-                {/* Aging approvals > 5 days */}
+                <Card className="rounded-xl border border-slate-200 shadow-sm">
+                    <div className="px-5 pt-4 pb-2">
+                        <p className="text-sm font-semibold text-slate-700">Approved Spend Trend</p>
+                        <p className="text-xs text-slate-400 mt-0.5">6-month approved expenses, cluster-wide</p>
+                    </div>
+                    <div className="px-5 pb-5">
+                        {trendData.every((d) => d.amount === 0) ? <EmptyChart /> : (
+                            <ResponsiveContainer width="100%" height={210}>
+                                <LineChart data={trendData} margin={{ left: 0, right: 8, top: 8, bottom: 4 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                    <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
+                                    <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false}
+                                        tickFormatter={(v: number) => `₹${(v / 1000).toFixed(0)}k`} width={36} />
+                                    <Tooltip formatter={currencyFmt as never}
+                                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
+                                    <Line type="monotone" dataKey="amount" stroke="#6366f1" strokeWidth={2.5}
+                                        dot={{ r: 3, fill: "#6366f1", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
+                </Card>
+
+                <Card className="rounded-xl border border-slate-200 shadow-sm">
+                    <div className="px-5 pt-4 pb-2">
+                        <p className="text-sm font-semibold text-slate-700">Top Stores by Spend</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Ranked by approved spend volume</p>
+                    </div>
+                    <div className="px-5 pb-5">
+                        {topStoresChart.length === 0 ? <EmptyChart /> : (
+                            <ResponsiveContainer width="100%" height={210}>
+                                <BarChart data={topStoresChart} layout="vertical" barSize={10}
+                                    margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
+                                    <XAxis type="number" hide />
+                                    <YAxis type="category" dataKey="name"
+                                        tick={{ fontSize: 11, fill: "#64748b" }}
+                                        width={90} tickLine={false} axisLine={false} />
+                                    <Tooltip formatter={currencyFmt as never}
+                                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
+                                    <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
+                </Card>
+            </div>
+
+            {/* ══════════════════════════════════════════════════════════════════
+                SECTION 5: APPROVAL BOTTLENECKS & TREASURY ACTIVITY
+            ══════════════════════════════════════════════════════════════════ */}
+            <SectionHeading
+                title="Approval Bottlenecks & Treasury Activity"
+                icon={<Clock className="w-4 h-4" />}
+                subtitle="Aging submissions and recent treasury top-ups"
+            />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10">
+
+                {/* Aging Approvals */}
                 <Card className="rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/50">
                         <div className="flex items-center gap-2">
                             <Clock className="w-4 h-4 text-orange-500 flex-shrink-0" />
                             <div>
-                                <p className="text-sm font-semibold text-slate-700">Aging Approvals</p>
-                                <p className="text-xs text-slate-400 mt-0.5">Submitted expenses pending 5+ days</p>
+                                <p className="text-sm font-semibold text-slate-700">Aging Submissions</p>
+                                <p className="text-xs text-slate-400 mt-0.5">Pending 5+ days</p>
                             </div>
                         </div>
                         {agingApprovals.length > 0 && (
-                            <span className="text-xs font-semibold text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                            <span className="text-xs font-bold text-orange-700 bg-orange-100 px-2.5 py-1 rounded-full flex-shrink-0">
                                 {agingApprovals.length}
                             </span>
                         )}
                     </div>
                     {agingApprovals.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-10 gap-2 text-slate-400">
-                            <CheckCircle2 className="w-7 h-7 text-emerald-300" />
+                            <CheckCircle2 className="w-8 h-8 text-emerald-300" />
                             <p className="text-sm font-medium">No stalled approvals</p>
                             <p className="text-xs text-slate-300">All submissions reviewed within 5 days</p>
                         </div>
@@ -994,25 +1032,25 @@ export default function ClusterReportsPage() {
                     )}
                 </Card>
 
-                {/* Recent treasury credits */}
+                {/* Recent Treasury Credits */}
                 <Card className="rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-100">
+                    <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-100 bg-slate-50/50">
                         <ArrowDownCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                         <div>
                             <p className="text-sm font-semibold text-slate-700">Recent Treasury Top-Ups</p>
-                            <p className="text-xs text-slate-400 mt-0.5">Latest credit transactions across cluster</p>
+                            <p className="text-xs text-slate-400 mt-0.5">Latest credit injections</p>
                         </div>
                     </div>
                     {filteredCredits.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-10 gap-2 text-slate-400">
-                            <Landmark className="w-7 h-7 text-slate-200" />
+                            <Landmark className="w-8 h-8 text-slate-200" />
                             <p className="text-sm font-medium">No recent top-ups</p>
-                            <p className="text-xs text-slate-300">No credit transactions on record</p>
+                            <p className="text-xs text-slate-300">No credit transactions recorded</p>
                         </div>
                     ) : (
                         <div className="divide-y divide-slate-50">
                             {filteredCredits.map((credit) => (
-                                <div key={credit.id} className="flex items-center justify-between px-5 py-3 hover:bg-slate-50/50 transition-colors">
+                                <div key={credit.id} className="flex items-center justify-between px-5 py-3 hover:bg-emerald-50/30 transition-colors">
                                     <div className="min-w-0 mr-4">
                                         <p className="text-sm font-medium text-slate-800 truncate">{credit.storeName}</p>
                                         {credit.remarks && (
@@ -1031,94 +1069,19 @@ export default function ClusterReportsPage() {
             </div>
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION E — Spend Analytics (charts preserved from original)
+                SECTION 6: CATEGORY & STORE ANALYTICS
             ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Spend Analytics" />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-
-                <Card className="rounded-xl border border-slate-200 shadow-sm">
-                    <div className="px-5 pt-4 pb-2">
-                        <p className="text-sm font-semibold text-slate-700">Top Stores by Approved Spend</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Ranked by fully approved spend</p>
-                    </div>
-                    <div className="px-5 pb-5">
-                        {topStoresChart.length === 0 ? <EmptyChart /> : (
-                            <ResponsiveContainer width="100%" height={210}>
-                                <BarChart data={topStoresChart} layout="vertical" barSize={10}
-                                    margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
-                                    <XAxis type="number" hide />
-                                    <YAxis type="category" dataKey="name"
-                                        tick={{ fontSize: 11, fill: "#64748b" }}
-                                        width={90} tickLine={false} axisLine={false} />
-                                    <Tooltip formatter={currencyFmt as never}
-                                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
-                                    <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        )}
-                    </div>
-                </Card>
-
-                <Card className="rounded-xl border border-slate-200 shadow-sm">
-                    <div className="px-5 pt-4 pb-2">
-                        <p className="text-sm font-semibold text-slate-700">Monthly Trend</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Cluster-wide approved spend, last 6 months</p>
-                    </div>
-                    <div className="px-5 pb-5">
-                        {trendData.every((d) => d.amount === 0) ? <EmptyChart /> : (
-                            <ResponsiveContainer width="100%" height={210}>
-                                <LineChart data={trendData} margin={{ left: 0, right: 8, top: 8, bottom: 4 }}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                                    <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
-                                    <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false}
-                                        tickFormatter={(v: number) => `₹${(v / 1000).toFixed(0)}k`} width={36} />
-                                    <Tooltip formatter={currencyFmt as never}
-                                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
-                                    <Line type="monotone" dataKey="amount" stroke="#6366f1" strokeWidth={2.5}
-                                        dot={{ r: 3, fill: "#6366f1", strokeWidth: 0 }} activeDot={{ r: 5 }} />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        )}
-                    </div>
-                </Card>
-            </div>
-
-            {/* ══════════════════════════════════════════════════════════════════
-                SECTION F — Store & Category Breakdown (preserved)
-            ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Store &amp; Category Breakdown" />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-
-                <Card className="rounded-xl border border-slate-200 shadow-sm">
-                    <div className="px-5 pt-4 pb-2">
-                        <p className="text-sm font-semibold text-slate-700">Store Comparison</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Approved · Pending · Rejected per store</p>
-                    </div>
-                    <div className="px-5 pb-5">
-                        {storeComparisonChart.length === 0 ? <EmptyChart /> : (
-                            <ResponsiveContainer width="100%" height={210}>
-                                <BarChart data={storeComparisonChart} barSize={7}
-                                    margin={{ left: 4, right: 8, top: 4, bottom: 4 }}>
-                                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
-                                    <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false}
-                                        tickFormatter={(v: number) => `₹${(v / 1000).toFixed(0)}k`} width={36} />
-                                    <Tooltip formatter={currencyFmt as never}
-                                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
-                                    <Legend iconType="circle" iconSize={7}
-                                        formatter={(v) => <span className="text-xs text-slate-600">{v}</span>} />
-                                    <Bar dataKey="Approved" fill="#22c55e" radius={[3, 3, 0, 0]} />
-                                    <Bar dataKey="Pending" fill="#f59e0b" radius={[3, 3, 0, 0]} />
-                                    <Bar dataKey="Rejected" fill="#ef4444" radius={[3, 3, 0, 0]} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        )}
-                    </div>
-                </Card>
+            <SectionHeading
+                title="Spend Breakdown"
+                icon={<PieChart className="w-4 h-4" />}
+                subtitle="Analysis by category and store performance"
+            />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10">
 
                 <Card className="rounded-xl border border-slate-200 shadow-sm">
                     <div className="px-5 pt-4 pb-2">
                         <p className="text-sm font-semibold text-slate-700">Spend by Category</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Approved expenses across all cluster stores</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Approved expenses, all stores</p>
                     </div>
                     <div className="px-5 pb-5">
                         {categoryData.length === 0 ? <EmptyChart /> : (
@@ -1141,124 +1104,55 @@ export default function ClusterReportsPage() {
                         )}
                     </div>
                 </Card>
+
+                <Card className="rounded-xl border border-slate-200 shadow-sm">
+                    <div className="px-5 pt-4 pb-2">
+                        <p className="text-sm font-semibold text-slate-700">Store Comparison</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Approved · Pending · Rejected</p>
+                    </div>
+                    <div className="px-5 pb-5">
+                        {storeComparisonChart.length === 0 ? <EmptyChart /> : (
+                            <ResponsiveContainer width="100%" height={210}>
+                                <BarChart data={storeComparisonChart} barSize={7}
+                                    margin={{ left: 4, right: 8, top: 4, bottom: 4 }}>
+                                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
+                                    <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false}
+                                        tickFormatter={(v: number) => `₹${(v / 1000).toFixed(0)}k`} width={36} />
+                                    <Tooltip formatter={currencyFmt as never}
+                                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
+                                    <Legend iconType="circle" iconSize={7}
+                                        formatter={(v) => <span className="text-xs text-slate-600">{v}</span>} />
+                                    <Bar dataKey="Approved" fill="#22c55e" radius={[3, 3, 0, 0]} />
+                                    <Bar dataKey="Pending" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+                                    <Bar dataKey="Rejected" fill="#ef4444" radius={[3, 3, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
+                </Card>
             </div>
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION G — Store Detail Table (preserved)
-            ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Store Detail" />
-            <Card className="rounded-xl border border-slate-200 shadow-sm mb-8 overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-100">
-                    <p className="text-sm font-semibold text-slate-700">All Stores</p>
-                    <p className="text-xs text-slate-400 mt-0.5">{storeBreakdown.length} store{storeBreakdown.length !== 1 ? "s" : ""} in cluster</p>
-                </div>
-                {loading ? (
-                    <div className="flex items-center justify-center h-28 text-slate-400 text-sm">Loading…</div>
-                ) : storeBreakdown.length === 0 ? (
-                    <div className="flex items-center justify-center h-28 text-slate-400 text-sm">No store data.</div>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="bg-slate-50 border-b border-slate-100">
-                                    {["Store", "Approved", "Pending", "Rejected", "Expenses"].map((h) => (
-                                        <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {storeBreakdown.map((s, i) => (
-                                    <tr key={s.name}
-                                        className={`border-b border-slate-50 hover:bg-slate-50/70 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-slate-50/30"}`}>
-                                        <td className="px-5 py-3 font-medium text-slate-800">{s.name}</td>
-                                        <td className="px-5 py-3 font-semibold text-emerald-700 tabular-nums">{formatCurrency(s.approved)}</td>
-                                        <td className="px-5 py-3 font-semibold text-amber-600 tabular-nums">{formatCurrency(s.pending)}</td>
-                                        <td className="px-5 py-3 font-semibold text-red-600 tabular-nums">{formatCurrency(s.rejected)}</td>
-                                        <td className="px-5 py-3 text-slate-600 tabular-nums">{s.count}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </Card>
-
-            {/* ══════════════════════════════════════════════════════════════════
-                SECTION H — Pending Approval Queue (preserved)
-            ══════════════════════════════════════════════════════════════════ */}
-            {submitted.length > 0 && (
-                <>
-                    <SectionHeading title="Pending Approval Queue" />
-                    <Card className="rounded-xl border border-amber-200 shadow-sm mb-8 overflow-hidden"
-                        style={{ backgroundColor: "rgba(254,243,199,0.15)" }}>
-                        <div className="flex items-center justify-between px-5 py-4 border-b border-amber-100">
-                            <div className="flex items-center gap-2">
-                                <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                                <div>
-                                    <p className="text-sm font-semibold text-slate-700">Submitted — Awaiting Your Approval</p>
-                                    <p className="text-xs text-slate-400 mt-0.5">
-                                        {formatCurrency(sumAmount(submitted))} total held · Requires your action
-                                    </p>
-                                </div>
-                            </div>
-                            <span className="text-xs font-semibold text-amber-700 bg-amber-100 px-2.5 py-1 rounded-full flex-shrink-0">
-                                {submitted.length} expense{submitted.length !== 1 ? "s" : ""}
-                            </span>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
-                                <thead>
-                                    <tr className="bg-amber-50/60 border-b border-amber-100">
-                                        {["Date", "Store", "Category", "Amount", "Status", "Receipt"].map((h) => (
-                                            <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {submitted.map((e, i) => (
-                                        <tr key={e.id}
-                                            className={`border-b border-amber-50 hover:bg-amber-50/60 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-amber-50/20"}`}>
-                                            <td className="px-5 py-3 text-slate-600 whitespace-nowrap">{isoToLabel(e.created_at)}</td>
-                                            <td className="px-5 py-3 text-slate-700 font-medium">{e.stores?.name ?? "—"}</td>
-                                            <td className="px-5 py-3 text-slate-600">{e.categories?.name ?? "—"}</td>
-                                            <td className="px-5 py-3 font-semibold text-slate-900 tabular-nums">{formatCurrency(e.amount)}</td>
-                                            <td className="px-5 py-3"><Badge status={e.status as never} /></td>
-                                            <td className="px-5 py-3">
-                                                {e.receipt_url ? (
-                                                    <a href={e.receipt_url} target="_blank" rel="noopener noreferrer"
-                                                        className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 text-xs font-medium transition-colors">
-                                                        View <ExternalLink className="w-3 h-3" />
-                                                    </a>
-                                                ) : (
-                                                    <span className="text-slate-300 text-xs">—</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </Card>
-                </>
-            )}
-
-            {/* ══════════════════════════════════════════════════════════════════
-                SECTION I — Rejection Insights (preserved)
+                SECTION 7: REJECTION INSIGHTS (Preserved)
             ══════════════════════════════════════════════════════════════════ */}
             {rejected.length > 0 && (
                 <>
-                    <SectionHeading title="Rejection Insights" />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                    <SectionHeading
+                        title="Rejection Analysis"
+                        icon={<AlertTriangle className="w-4 h-4" />}
+                        subtitle="Patterns and problem areas"
+                    />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10">
 
                         <Card className="rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                            <div className="px-5 py-4 border-b border-slate-100">
-                                <p className="text-sm font-semibold text-slate-700">Rejections by Category</p>
-                                <p className="text-xs text-slate-400 mt-0.5">All rejection stages</p>
+                            <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
+                                <p className="text-sm font-semibold text-slate-700">By Category</p>
+                                <p className="text-xs text-slate-400 mt-0.5">Problem categories</p>
                             </div>
                             <table className="w-full text-sm">
                                 <thead>
                                     <tr className="bg-slate-50 border-b border-slate-100">
-                                        {["Category", "Count", "Amount"].map((h) => (
+                                        {["Category", "Count", "Total"].map((h) => (
                                             <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                                         ))}
                                     </tr>
@@ -1281,27 +1175,27 @@ export default function ClusterReportsPage() {
                         </Card>
 
                         <Card className="rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                            <div className="px-5 py-4 border-b border-slate-100">
-                                <p className="text-sm font-semibold text-slate-700">Rejections by Store</p>
-                                <p className="text-xs text-slate-400 mt-0.5">Stores with highest rejection totals</p>
+                            <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
+                                <p className="text-sm font-semibold text-slate-700">Store Detail</p>
+                                <p className="text-xs text-slate-400 mt-0.5">Highest rejection totals</p>
                             </div>
-                            {rejectionByStore.length === 0 ? (
+                            {rejectionByCategory.length === 0 ? (
                                 <div className="flex items-center justify-center h-28 text-slate-300 text-sm">No data</div>
                             ) : (
                                 <table className="w-full text-sm">
                                     <thead>
                                         <tr className="bg-slate-50 border-b border-slate-100">
-                                            {["Store", "Rejected Amount"].map((h) => (
+                                            {["Category", "Count"].map((h) => (
                                                 <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                                             ))}
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {rejectionByStore.map((row, i) => (
+                                        {rejectionByCategory.slice(0, 6).map((row, i) => (
                                             <tr key={row.name}
                                                 className={`border-b border-slate-50 hover:bg-slate-50/70 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-slate-50/30"}`}>
                                                 <td className="px-5 py-3 font-medium text-slate-700">{row.name}</td>
-                                                <td className="px-5 py-3 font-semibold text-red-600 tabular-nums">{formatCurrency(row.rejected)}</td>
+                                                <td className="px-5 py-3 font-semibold text-red-600 tabular-nums">{row.count} items</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -1313,54 +1207,48 @@ export default function ClusterReportsPage() {
             )}
 
             {/* ══════════════════════════════════════════════════════════════════
-                SECTION J — Approval Pipeline (preserved)
+                SECTION 8: ALL STORES DETAIL TABLE
             ══════════════════════════════════════════════════════════════════ */}
-            <SectionHeading title="Approval Pipeline" />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                <Card className="rounded-xl border border-slate-200 shadow-sm">
-                    <div className="px-5 pt-4 pb-1">
-                        <p className="text-sm font-semibold text-slate-700">Expense Pipeline</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Cluster-wide breakdown by stage</p>
-                    </div>
-                    <div className="px-5 pb-2">
-                        <PipelineStep label="Awaiting Your Approval" count={submitted.length}
-                            amount={sumAmount(submitted)} color="#f59e0b" icon={<Clock className="w-4 h-4" />} />
-                        <PipelineStep label="Approved (Accounting Recording)" count={acctPend.length}
-                            amount={sumAmount(acctPend)} color="#14b8a6" icon={<CheckCircle2 className="w-4 h-4" />} />
-                        <PipelineStep label="Fully Approved" count={approved.length}
-                            amount={totalApproved} color="#22c55e" icon={<TrendingUp className="w-4 h-4" />} />
-                        <PipelineStep label="Rejected" count={rejected.length}
-                            amount={totalRejected} color="#ef4444" icon={<XCircle className="w-4 h-4" />} />
-                    </div>
-                </Card>
-
-                {/* High-rejection store flag (preserved, budget-language removed) */}
-                {highRejectionStores.length > 0 ? (
-                    <Card className="rounded-xl border border-orange-200 shadow-sm"
-                        style={{ backgroundColor: "rgba(255,247,237,0.5)" }}>
-                        <div className="flex items-center gap-2 px-5 py-4 border-b border-orange-100">
-                            <AlertTriangle className="w-4 h-4 text-orange-500 flex-shrink-0" />
-                            <p className="text-sm font-semibold text-slate-700">High Rejection Rate Stores</p>
-                        </div>
-                        <div className="divide-y divide-orange-50">
-                            {highRejectionStores.map((s) => (
-                                <div key={s.name} className="flex items-center justify-between px-5 py-3">
-                                    <span className="text-sm font-medium text-slate-700">{s.name}</span>
-                                    <span className="text-xs font-semibold text-orange-700">{formatCurrency(s.rejected)} rejected</span>
-                                </div>
-                            ))}
-                        </div>
-                    </Card>
+            <SectionHeading
+                title="Store Performance Detail"
+                icon={<Store className="w-4 h-4" />}
+                subtitle="Complete store-by-store breakdown"
+            />
+            <Card className="rounded-xl border border-slate-200 shadow-sm mb-8 overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
+                    <p className="text-sm font-semibold text-slate-700">All Stores</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{storeBreakdown.length} stores in cluster</p>
+                </div>
+                {loading ? (
+                    <div className="flex items-center justify-center h-28 text-slate-400 text-sm">Loading…</div>
+                ) : storeBreakdown.length === 0 ? (
+                    <div className="flex items-center justify-center h-28 text-slate-400 text-sm">No store data.</div>
                 ) : (
-                    <Card className="rounded-xl border border-slate-200 shadow-sm">
-                        <CardContent className="flex flex-col items-center justify-center h-full py-10 gap-2 text-slate-400">
-                            <CheckCircle2 className="w-8 h-8 text-emerald-300" />
-                            <p className="text-sm font-medium">No high-rejection stores</p>
-                            <p className="text-xs text-slate-300">All stores within normal rejection rates</p>
-                        </CardContent>
-                    </Card>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="bg-slate-50 border-b border-slate-100">
+                                    {["Store", "Approved", "Pending", "Rejected", "Total"].map((h) => (
+                                        <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {storeBreakdown.map((s, i) => (
+                                    <tr key={s.name}
+                                        className={`border-b border-slate-50 hover:bg-slate-50/70 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-slate-50/30"}`}>
+                                        <td className="px-5 py-3 font-semibold text-slate-800">{s.name}</td>
+                                        <td className="px-5 py-3 font-semibold text-emerald-700 tabular-nums">{formatCurrency(s.approved)}</td>
+                                        <td className="px-5 py-3 font-semibold text-amber-600 tabular-nums">{formatCurrency(s.pending)}</td>
+                                        <td className="px-5 py-3 font-semibold text-red-600 tabular-nums">{formatCurrency(s.rejected)}</td>
+                                        <td className="px-5 py-3 text-slate-600 tabular-nums font-medium">{s.count} items</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
-            </div>
+            </Card>
 
         </PageShell>
     );
