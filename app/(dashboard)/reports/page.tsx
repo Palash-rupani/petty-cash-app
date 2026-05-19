@@ -6,7 +6,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { PENDING_STATUSES } from '@/lib/constants/expenseStatuses'
+import { normalizeExpenseStatus } from '@/types'
 import { exportCSV } from '@/lib/utils/exportCSV'
 import { getClusterName } from '@/lib/utils/getClusterName'
 import { Card } from '@/components/ui/Card'
@@ -356,19 +356,15 @@ export default function ReportsPage() {
       const storeExpenses = expenses.filter((e) => e.store_id === store.id)
 
       const approvedSpend = storeExpenses
-        .filter((e) =>
-          ['accounting_approved', 'synced_to_tally'].includes(e.status)
-        )
+        .filter((e) => normalizeExpenseStatus(e.status as any) === 'approved')
         .reduce((s, e) => s + Number(e.amount), 0)
 
       const pendingSpend = storeExpenses
-        .filter((e) =>
-          (PENDING_STATUSES as readonly string[]).includes(e.status)
-        )
+        .filter((e) => normalizeExpenseStatus(e.status as any) === 'submitted')
         .reduce((s, e) => s + Number(e.amount), 0)
 
       const rejectedSpend = storeExpenses
-        .filter((e) => e.status.includes('rejected'))
+        .filter((e) => normalizeExpenseStatus(e.status as any) === 'rejected')
         .reduce((s, e) => s + Number(e.amount), 0)
 
       const targetFloat = Number(store.monthly_limit) || 0

@@ -70,13 +70,10 @@ interface StoreTreasuryPosition {
     oldestSubmittedAt: number | null;
 }
 
-import { PENDING_STATUSES } from "@/lib/constants/expenseStatuses";
+import { normalizeExpenseStatus } from "@/types";
 
 // ─── Status Groups ────────────────────────────────────────────────────────────
 
-const APPROVED_STATUSES = ["accounting_approved", "synced_to_tally"];
-const REJECTED_STATUSES = ["cluster_rejected", "accounting_rejected", "tally_sync_failed"];
-const SUBMITTED_STATUSES = ["submitted"];
 const ACCT_PENDING = ["cluster_approved"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -351,7 +348,7 @@ export default function ClusterReportsPage() {
                     .from("expenses")
                     .select("amount, expense_month, created_at, status, store_id")
                     .in("store_id", storeIds)
-                    .in("status", APPROVED_STATUSES)
+                    .in("status", ["approved", "accounting_approved", "synced_to_tally", "cluster_approved"])
                     .gte("created_at", sixAgo.toISOString())
                     .then(({ data }) => {
                         if (!data) return;
@@ -413,10 +410,10 @@ export default function ClusterReportsPage() {
 
     // ── Derived: expense buckets ──────────────────────────────────────────────
 
-    const approved = useMemo(() => filteredExpenses.filter((e) => APPROVED_STATUSES.includes(e.status)), [filteredExpenses]);
-    const pending = useMemo(() => filteredExpenses.filter((e) => (PENDING_STATUSES as readonly string[]).includes(e.status)), [filteredExpenses]);
-    const rejected = useMemo(() => filteredExpenses.filter((e) => REJECTED_STATUSES.includes(e.status)), [filteredExpenses]);
-    const submitted = useMemo(() => filteredExpenses.filter((e) => SUBMITTED_STATUSES.includes(e.status)), [filteredExpenses]);
+    const approved = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "approved"), [filteredExpenses]);
+    const pending = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "submitted"), [filteredExpenses]);
+    const rejected = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "rejected"), [filteredExpenses]);
+    const submitted = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "submitted"), [filteredExpenses]);
     const acctPend = useMemo(() => filteredExpenses.filter((e) => ACCT_PENDING.includes(e.status)), [filteredExpenses]);
     const clRejected = useMemo(() => filteredExpenses.filter((e) => e.status === "cluster_rejected"), [filteredExpenses]);
 
@@ -461,13 +458,13 @@ export default function ClusterReportsPage() {
             const pos = posMap[e.store_id];
             if (!pos) return;
             pos.expenseCount++;
-            if (APPROVED_STATUSES.includes(e.status)) pos.approved += e.amount;
-            if ((PENDING_STATUSES as readonly string[]).includes(e.status)) {
+            if (normalizeExpenseStatus(e.status as any) === "approved") pos.approved += e.amount;
+            if (normalizeExpenseStatus(e.status as any) === "submitted") {
                 pos.pendingAmount += e.amount;
                 pos.pendingCount++;
             }
-            if (REJECTED_STATUSES.includes(e.status)) pos.rejected += e.amount;
-            if (e.status === "submitted") {
+            if (normalizeExpenseStatus(e.status as any) === "rejected") pos.rejected += e.amount;
+            if (normalizeExpenseStatus(e.status as any) === "submitted") {
                 const t = new Date(e.created_at).getTime();
                 if (pos.oldestSubmittedAt === null || t < pos.oldestSubmittedAt) {
                     pos.oldestSubmittedAt = t;
@@ -582,9 +579,9 @@ export default function ClusterReportsPage() {
                 };
             }
             map[sid].count++;
-            if (APPROVED_STATUSES.includes(e.status)) map[sid].approved += e.amount;
-            if ((PENDING_STATUSES as readonly string[]).includes(e.status)) map[sid].pending += e.amount;
-            if (REJECTED_STATUSES.includes(e.status)) map[sid].rejected += e.amount;
+            if (normalizeExpenseStatus(e.status as any) === "approved") map[sid].approved += e.amount;
+            if (normalizeExpenseStatus(e.status as any) === "submitted") map[sid].pending += e.amount;
+            if (normalizeExpenseStatus(e.status as any) === "rejected") map[sid].rejected += e.amount;
         });
         return Object.values(map).sort((a, b) => b.approved - a.approved);
     }, [filteredExpenses]);
@@ -627,7 +624,7 @@ export default function ClusterReportsPage() {
         const totalCountMap: Record<string, number> = {};
         filteredExpenses.forEach((e) => {
             totalCountMap[e.store_id] = (totalCountMap[e.store_id] ?? 0) + 1;
-            if (REJECTED_STATUSES.includes(e.status))
+            if (normalizeExpenseStatus(e.status as any) === "rejected")
                 rejCountMap[e.store_id] = (rejCountMap[e.store_id] ?? 0) + 1;
         });
         return storeBreakdown.filter((s) => {

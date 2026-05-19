@@ -43,7 +43,7 @@ import {
     Timer,
     Banknote,
     Lock,
-} from "lucide-react";
+} from "lucide-react";import { normalizeExpenseStatus } from "@/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -304,15 +304,17 @@ export default function StoreManagerReportPage() {
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
         sixMonthsAgo.setDate(1);
+        const APPROVED_DB_STATUSES = ["approved", "accounting_approved", "synced_to_tally", "cluster_approved"];
         supabase.from("expenses")
             .select("amount, expense_month, status, created_at")
             .eq("store_id", user.store_id)
-            .eq("status", EXECUTED_STATUS)
+            .in("status", APPROVED_DB_STATUSES)
             .gte("created_at", sixMonthsAgo.toISOString())
             .then(({ data }) => {
                 if (!data) return;
                 const map: Record<string, number> = {};
                 data.forEach((e) => {
+                    if (normalizeExpenseStatus(e.status as any) !== 'approved') return;
                     const key = e.expense_month
                         ? (e.expense_month as string).slice(0, 7)
                         : monthKey((e.created_at as string) ?? "");
@@ -351,10 +353,10 @@ export default function StoreManagerReportPage() {
     // ── Derived calculations ─────────────────────────────────────────────────
 
     // Treasury lifecycle buckets — one status per group, no multi-stage overlap
-    const submitted = useMemo(() => expenses.filter((e) => e.status === SUBMITTED_STATUS), [expenses]);
-    const executed = useMemo(() => expenses.filter((e) => e.status === EXECUTED_STATUS), [expenses]);
-    const rejected = useMemo(() => expenses.filter((e) => e.status === REJECTED_STATUS), [expenses]);
-    const drafts = useMemo(() => expenses.filter((e) => e.status === "draft"), [expenses]);
+    const submitted = useMemo(() => expenses.filter((e) => normalizeExpenseStatus(e.status as any) === "submitted"), [expenses]);
+    const executed = useMemo(() => expenses.filter((e) => normalizeExpenseStatus(e.status as any) === "approved"), [expenses]);
+    const rejected = useMemo(() => expenses.filter((e) => normalizeExpenseStatus(e.status as any) === "rejected"), [expenses]);
+    const drafts = useMemo(() => expenses.filter((e) => normalizeExpenseStatus(e.status as any) === "draft"), [expenses]);
 
     const totalExecuted = useMemo(() => executed.reduce((s, e) => s + e.amount, 0), [executed]);
     const totalSubmitted = useMemo(() => submitted.reduce((s, e) => s + e.amount, 0), [submitted]);

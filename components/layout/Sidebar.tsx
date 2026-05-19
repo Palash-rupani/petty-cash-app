@@ -1,5 +1,5 @@
 'use client'
-
+import { Landmark } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
@@ -66,7 +66,13 @@ const navItems: NavItem[] = [
     href: '/accounting-dashboard',
     icon: <BarChart3 size={18} />,
     roles: ['accounting'],
+  }, {
+    label: 'Cluster Liquidity',
+    href: '/cluster-liquidity',
+    icon: <Landmark size={18} />,
+    roles: ['cluster_manager'],
   },
+
 ]
 
 const roleLabels: Record<Role, string> = {

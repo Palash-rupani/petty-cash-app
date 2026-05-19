@@ -56,12 +56,7 @@ interface ClusterTreasuryPosition {
     pendingExposure: number;
 }
 
-import { PENDING_STATUSES } from "@/lib/constants/expenseStatuses";
-
-// ─── Status Groups ────────────────────────────────────────────────────────────
-
-const APPROVED_STATUSES = ["accounting_approved", "synced_to_tally"];
-const REJECTED_STATUSES = ["cluster_rejected", "accounting_rejected", "tally_sync_failed"];
+import { normalizeExpenseStatus } from "@/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -299,7 +294,7 @@ export default function EnterpriseTreasuryDashboard() {
 
         // Add pending exposure from all expenses
         expenses.forEach((e) => {
-            if ((PENDING_STATUSES as readonly string[]).includes(e.status)) {
+            if (normalizeExpenseStatus(e.status as any) === 'submitted') {
                 const store = stores.find((s) => s.id === e.store_id);
                 if (store && store.cluster_id && map[store.cluster_id]) {
                     map[store.cluster_id].pendingExposure += e.amount;
@@ -342,9 +337,9 @@ export default function EnterpriseTreasuryDashboard() {
         });
     }, [expenses, activeStoreIds, filters.dateRange]);
 
-    const filteredApproved = useMemo(() => filteredExpenses.filter((e) => APPROVED_STATUSES.includes(e.status)), [filteredExpenses]);
-    const filteredPending = useMemo(() => filteredExpenses.filter((e) => (PENDING_STATUSES as readonly string[]).includes(e.status)), [filteredExpenses]);
-    const filteredRejected = useMemo(() => filteredExpenses.filter((e) => REJECTED_STATUSES.includes(e.status)), [filteredExpenses]);
+    const filteredApproved = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "approved"), [filteredExpenses]);
+    const filteredPending = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "submitted"), [filteredExpenses]);
+    const filteredRejected = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "rejected"), [filteredExpenses]);
 
     // Analytics: Burn Trend
     const burnTrendData = useMemo(() => {
