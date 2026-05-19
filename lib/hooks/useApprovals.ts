@@ -67,13 +67,24 @@ export function useApprovals() {
 
     const isAccounting = role === 'accounting'
 
-    const newStatus = isAccounting ? 'accounting_approved' : 'cluster_approved'
-    const approverField = isAccounting ? 'accounting_approved_by' : 'cluster_approved_by'
+    // ── Cluster manager approval: atomic RPC ──────────────────────────────
+    if (!isAccounting) {
+      const { error: rpcError } = await supabase.rpc('approve_expense', {
+        p_expense_id: expenseId,
+        p_approver_id: user.id,
+        p_remarks: remarks ?? `Approved by ${role.replace('_', ' ')}`,
+      })
 
-    // ── 1. Status-guarded update ───────────────────────────────────────────
-    // Only update rows in the exact expected prior state to prevent
-    // stale or duplicate approvals from succeeding silently.
-    const expectedPriorStatus = isAccounting ? 'cluster_approved' : 'submitted'
+      if (rpcError) return { error: rpcError.message }
+
+      await fetchPending()
+      return { error: null }
+    }
+
+    // ── Accounting compatibility flow (temporary — kept as-is) ─────────────
+    const newStatus = 'accounting_approved'
+    const approverField = 'accounting_approved_by'
+    const expectedPriorStatus = 'cluster_approved'
 
     const { data: updatedRows, error: updateError } = await supabase
       .from('expenses')
@@ -87,46 +98,35 @@ export function useApprovals() {
 
     if (updateError) return { error: updateError.message }
 
-    // No row matched — expense has moved to a different state already
     if (!updatedRows || updatedRows.length === 0) {
       return { error: 'Expense is no longer eligible for approval' }
     }
 
     const expense = updatedRows[0]
 
-    // ── 2. Ledger debit (accounting approval only) ─────────────────────────
-    // Directly attempt the insert and rely on the UNIQUE constraint on
-    // cash_transactions(reference_expense_id) for idempotency.
-    // No pre-check select — that pattern is race-condition unsafe.
-    if (isAccounting) {
-      const { error: ledgerError } = await supabase
-        .from('cash_transactions')
-        .insert({
-          store_id: expense.store_id,
-          created_by: user.id,
-          type: 'debit',
-          amount: expense.amount,
-          remarks: `Approved expense: ${expense.description ?? 'Expense deduction'}`,
-          reference_expense_id: expenseId,
-        })
+    // ── Ledger debit (accounting approval only) ────────────────────────────
+    const { error: ledgerError } = await supabase
+      .from('cash_transactions')
+      .insert({
+        store_id: expense.store_id,
+        created_by: user.id,
+        type: 'debit',
+        amount: expense.amount,
+        remarks: `Approved expense: ${expense.description ?? 'Expense deduction'}`,
+        reference_expense_id: expenseId,
+      })
 
-      if (ledgerError) {
-        if (ledgerError.code === '23505') {
-          // Duplicate — constraint caught a concurrent insert.
-          // Debit already recorded; treat as idempotent success.
-          console.warn(
-            `[useApprovals] Duplicate ledger debit suppressed for expense ${expenseId} — already recorded.`
-          )
-        } else {
-          // Genuine ledger failure — surface the error and halt.
-          // The expense status update has already committed; the caller
-          // should handle this edge case (e.g. alert finance ops).
-          return { error: `Ledger write failed: ${ledgerError.message}` }
-        }
+    if (ledgerError) {
+      if (ledgerError.code === '23505') {
+        console.warn(
+          `[useApprovals] Duplicate ledger debit suppressed for expense ${expenseId} — already recorded.`
+        )
+      } else {
+        return { error: `Ledger write failed: ${ledgerError.message}` }
       }
     }
 
-    // ── 3. Audit log ───────────────────────────────────────────────────────
+    // ── Audit log ──────────────────────────────────────────────────────────
     await supabase.from('audit_logs').insert({
       expense_id: expenseId,
       action: newStatus,
@@ -151,8 +151,24 @@ export function useApprovals() {
 
     if (!user) return { error: 'Not authenticated' }
 
-    const newStatus =
-      role === 'cluster_manager' ? 'cluster_rejected' : 'accounting_rejected'
+    const isAccounting = role === 'accounting'
+
+    // ── Cluster manager rejection: atomic RPC ──────────────────────────────
+    if (!isAccounting) {
+      const { error: rpcError } = await supabase.rpc('reject_expense', {
+        p_expense_id: expenseId,
+        p_approver_id: user.id,
+        p_rejection_reason: rejectionReason,
+      })
+
+      if (rpcError) return { error: rpcError.message }
+
+      await fetchPending()
+      return { error: null }
+    }
+
+    // ── Accounting compatibility flow (temporary — kept as-is) ─────────────
+    const newStatus = 'accounting_rejected'
 
     const { data: updatedRows, error: updateError } = await supabase
       .from('expenses')

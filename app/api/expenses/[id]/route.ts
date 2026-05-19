@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server'
 // ─── PATCH /api/expenses/[id] ─────────────────────────────────────────────────
 // Allowed operations:
 //   • Edit draft fields  (status === 'draft', own expense, store_manager)
-//   • Submit for approval (status: 'draft' → 'submitted')
+//   • Submit for approval (status: 'draft' → 'submitted') via atomic RPC
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -59,21 +59,61 @@ export async function PATCH(
     )
   }
 
+  // ── draft → submitted: atomic RPC ─────────────────────────────────────────
+  // Status update, treasury reservation, and audit log are written atomically
+  // inside submit_expense_for_approval(). No partial state is possible.
+  if (body.status === 'submitted') {
+    const { error: rpcError } = await supabase.rpc('submit_expense_for_approval', {
+      p_expense_id: id,
+      p_user_id: user.id,
+    })
+
+    if (rpcError) {
+      // Surface structured RPC error messages from RAISE EXCEPTION to the client
+      const msg = rpcError.message ?? 'Submission failed'
+
+      if (msg.includes('EXPENSE_NOT_FOUND')) return NextResponse.json({ error: 'Expense not found' }, { status: 404 })
+      if (msg.includes('USER_NOT_FOUND')) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+      if (msg.includes('FORBIDDEN')) return NextResponse.json({ error: 'You can only submit your own expenses' }, { status: 403 })
+      if (msg.includes('INVALID_STATUS')) return NextResponse.json({ error: 'Only draft expenses can be submitted' }, { status: 422 })
+
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+
+    // Fetch the updated expense to return the same shape as before
+    const { data: submitted, error: refetchError } = await supabase
+      .from('expenses')
+      .select(`
+        *,
+        store:stores(id, name, monthly_limit),
+        category:categories(id, name),
+        creator:users!expenses_created_by_fkey(id, name, email)
+      `)
+      .eq('id', id)
+      .single()
+
+    if (refetchError || !submitted) {
+      return NextResponse.json({ error: 'Expense submitted but could not be retrieved' }, { status: 500 })
+    }
+
+    return NextResponse.json(submitted)
+  }
+
+  // ── Draft field edits (non-submission PATCH) ───────────────────────────────
+  // Only allow status-free field updates here. Any attempt to set a status
+  // other than 'submitted' is rejected — submission is handled above.
+  if (body.status !== undefined) {
+    return NextResponse.json({ error: 'Invalid status transition' }, { status: 422 })
+  }
+
   // Build the update payload — only include fields present in body
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const updates: Record<string, any> = { updated_by: user.id }
 
   if (body.category_id !== undefined) updates.category_id = body.category_id
-  if (body.amount      !== undefined) updates.amount      = body.amount
+  if (body.amount !== undefined) updates.amount = body.amount
   if (body.description !== undefined) updates.description = body.description
   if (body.receipt_url !== undefined) updates.receipt_url = body.receipt_url
-  if (body.status      !== undefined) {
-    // Only allow draft → submitted transition via this route
-    if (body.status !== 'submitted') {
-      return NextResponse.json({ error: 'Invalid status transition' }, { status: 422 })
-    }
-    updates.status = 'submitted'
-  }
 
   const { data, error } = await supabase
     .from('expenses')
@@ -91,19 +131,12 @@ export async function PATCH(
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  // Audit log
-  const action =
-    updates.status === 'submitted' ? 'submitted' : 'draft_updated'
-  const remarks =
-    updates.status === 'submitted'
-      ? 'Submitted for approval'
-      : 'Draft updated'
-
+  // Audit log for draft edits (kept as direct insert — not treasury-critical)
   await supabase.from('audit_logs').insert({
     expense_id: id,
-    action,
+    action: 'draft_updated',
     performed_by: user.id,
-    remarks,
+    remarks: 'Draft updated',
   })
 
   return NextResponse.json(data)

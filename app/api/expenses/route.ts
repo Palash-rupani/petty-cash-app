@@ -53,7 +53,10 @@ export async function POST(request: Request) {
     .single()
 
   if (!profile || profile.role !== 'store_manager') {
-    return NextResponse.json({ error: 'Only store managers can create expenses' }, { status: 403 })
+    return NextResponse.json(
+      { error: 'Only store managers can create expenses' },
+      { status: 403 }
+    )
   }
 
   const now = new Date()
@@ -61,6 +64,16 @@ export async function POST(request: Request) {
   const expenseMonth =
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
 
+  const requestedStatus =
+    body.status === 'submitted'
+      ? 'submitted'
+      : 'draft'
+
+  /**
+   * =========================================================
+   * CREATE EXPENSE
+   * =========================================================
+   */
   const { data, error } = await supabase
     .from('expenses')
     .insert({
@@ -71,22 +84,81 @@ export async function POST(request: Request) {
       description: body.description,
       receipt_url: body.receipt_url ?? null,
       expense_month: expenseMonth,
-      status: body.status ?? 'draft',
+      status: requestedStatus,
     })
     .select()
     .single()
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error || !data) {
+    return NextResponse.json(
+      { error: error?.message ?? 'Failed to create expense' },
+      { status: 500 }
+    )
   }
 
-  // Audit log
-  await supabase.from('audit_logs').insert({
-    expense_id: data.id,
-    action: body.status === 'submitted' ? 'submitted' : 'draft_saved',
-    performed_by: user.id,
-    remarks: body.status === 'submitted' ? 'Submitted for approval' : 'Saved as draft',
-  })
+  /**
+   * =========================================================
+   * DIRECT SUBMIT FLOW
+   * =========================================================
+   *
+   * If expense is created directly as submitted:
+   * - create treasury reservation
+   * - create submitted audit log
+   */
+  if (requestedStatus === 'submitted') {
+
+    /**
+     * Create treasury reservation
+     */
+    const { error: reservationError } = await supabase
+      .from('treasury_reservations')
+      .insert({
+        expense_id: data.id,
+        store_id: profile.store_id,
+        amount: body.amount,
+        status: 'active',
+        created_by: user.id,
+      })
+
+    if (reservationError) {
+
+      /**
+       * Rollback expense if reservation fails
+       */
+      await supabase
+        .from('expenses')
+        .delete()
+        .eq('id', data.id)
+
+      return NextResponse.json(
+        {
+          error: `Reservation creation failed: ${reservationError.message}`,
+        },
+        { status: 500 }
+      )
+    }
+
+    /**
+     * Audit log
+     */
+    await supabase.from('audit_logs').insert({
+      expense_id: data.id,
+      action: 'submitted',
+      performed_by: user.id,
+      remarks: 'Submitted for approval',
+    })
+  } else {
+
+    /**
+     * Draft audit log
+     */
+    await supabase.from('audit_logs').insert({
+      expense_id: data.id,
+      action: 'draft_saved',
+      performed_by: user.id,
+      remarks: 'Saved as draft',
+    })
+  }
 
   return NextResponse.json(data, { status: 201 })
 }
