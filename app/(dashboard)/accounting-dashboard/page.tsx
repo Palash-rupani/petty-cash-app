@@ -31,7 +31,7 @@ interface StoreRow {
     name: string;
     monthly_limit: number;
     cluster_id: string;
-    clusters: { id: string; name: string } | null;
+    cluster: { id: string; name: string } | null;
 }
 
 interface Expense {
@@ -203,10 +203,42 @@ export default function EnterpriseTreasuryDashboard() {
                 // 1. Fetch stores
                 const { data: storeData, error: storeErr } = await supabase
                     .from("stores")
-                    .select("id, name, monthly_limit, cluster_id, clusters(id, name)");
+                    .select("id, name, monthly_limit, cluster_id");
 
                 if (storeErr) throw storeErr;
-                const storeRows = (storeData ?? []) as unknown as StoreRow[];
+
+                // Fetch clusters directly
+                const { data: clusterData, error: clusterErr } = await supabase
+                    .from("clusters")
+                    .select("id, name");
+
+                if (clusterErr) throw clusterErr;
+
+                // Build deterministic map
+                const clusterMap = new Map((clusterData ?? []).map((c) => [c.id, c.name]));
+                console.log("CLUSTER DATA:", clusterData);
+console.log("CLUSTER MAP:", Array.from(clusterMap.entries()));
+
+                // Manually enrich stores
+                const storeRows = (storeData ?? []).map((s) => ({
+                    ...s,
+                    cluster: {
+                        id: s.cluster_id,
+                        name: clusterMap.get(s.cluster_id) ?? "Unknown Cluster",
+                    },
+                })) as StoreRow[];
+                console.log("RAW STORE DATA:", storeData);
+
+console.log("ENRICHED STORES:", storeRows);
+
+storeRows.forEach((s) => {
+  console.log("STORE CHECK:", {
+    store: s.name,
+    clusterId: s.cluster_id,
+    cluster: s.cluster,
+  });
+});
+
                 setStores(storeRows);
 
                 const storeIds = storeRows.map((s) => s.id);
@@ -261,13 +293,14 @@ export default function EnterpriseTreasuryDashboard() {
 
         // Seed from all stores
         stores.forEach((s) => {
+            console.log("GLOBAL POSITION STORE:", s);
             const cid = s.cluster_id;
             if (!cid) return; // Skip stores without clusters
 
             if (!map[cid]) {
                 map[cid] = {
                     clusterId: cid,
-                    name: getClusterName(s.clusters),
+                    name: getClusterName(s.cluster),
                     balance: 0,
                     actualBalance: 0,
                     targetFloat: 0,
@@ -364,7 +397,7 @@ export default function EnterpriseTreasuryDashboard() {
         const map: Record<string, number> = {};
         filteredApproved.forEach((e) => {
             const store = stores.find((s) => s.id === e.store_id);
-            const cName = getClusterName(store?.clusters);
+            const cName = getClusterName(store?.cluster);
             map[cName] = (map[cName] ?? 0) + e.amount;
         });
         return Object.entries(map)
