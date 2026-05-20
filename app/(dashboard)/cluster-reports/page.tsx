@@ -71,10 +71,6 @@ interface StoreTreasuryPosition {
 
 import { normalizeExpenseStatus } from "@/types";
 
-// ─── Status Groups ────────────────────────────────────────────────────────────
-
-const ACCT_PENDING = ["cluster_approved"];
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isoToLabel(dateStr: string) {
@@ -352,6 +348,9 @@ export default function ClusterTreasuryDashboard() {
                     .from("expenses")
                     .select("amount, expense_month, created_at, status, store_id")
                     .in("store_id", storeIds)
+                    // Historical wide-net: catches all legacy + current approved states
+                    // for complete 6-month trend coverage. normalizeExpenseStatus()
+                    // is applied in the trendData useMemo to filter down to 'approved' only.
                     .in("status", ["approved", "accounting_approved", "synced_to_tally", "cluster_approved"])
                     .gte("created_at", sixAgo.toISOString())
                     .then(({ data }) => {
@@ -414,7 +413,6 @@ export default function ClusterTreasuryDashboard() {
     const pending = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "submitted"), [filteredExpenses]);
     const rejected = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "rejected"), [filteredExpenses]);
     const submitted = useMemo(() => filteredExpenses.filter((e) => normalizeExpenseStatus(e.status as any) === "submitted"), [filteredExpenses]);
-    const acctPend = useMemo(() => filteredExpenses.filter((e) => ACCT_PENDING.includes(e.status)), [filteredExpenses]);
 
     const totalApproved = useMemo(() => sumAmount(approved), [approved]);
     const totalPending = useMemo(() => sumAmount(pending), [pending]);
@@ -843,9 +841,9 @@ export default function ClusterTreasuryDashboard() {
                                     return (
                                         <tr key={pos.storeId}
                                             className={`border-b border-slate-100 transition-colors ${isNeg ? "bg-red-50/40 hover:bg-red-50/60" :
-                                                    health === "low" ? "bg-amber-50/20 hover:bg-amber-50/40" :
-                                                        i % 2 === 0 ? "bg-white hover:bg-slate-50" :
-                                                            "bg-slate-50/40 hover:bg-slate-50/70"
+                                                health === "low" ? "bg-amber-50/20 hover:bg-amber-50/40" :
+                                                    i % 2 === 0 ? "bg-white hover:bg-slate-50" :
+                                                        "bg-slate-50/40 hover:bg-slate-50/70"
                                                 }`}>
                                             <td className="px-5 py-3 font-semibold text-slate-800">{pos.name}</td>
                                             <td className="px-5 py-3 whitespace-nowrap">

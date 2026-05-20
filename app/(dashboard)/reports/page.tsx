@@ -64,13 +64,7 @@ interface StoreMetrics {
   status: 'healthy' | 'low' | 'critical'
 }
 
-interface TopUpModal {
-  open: boolean
-  storeId: string
-  storeName: string
-  prefillAmount: number
-}
-
+ 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
 function getStatus(balance: number, target: number): 'healthy' | 'low' | 'critical' {
@@ -132,140 +126,7 @@ function UtilizationBar({ pct }: { pct: number }) {
   )
 }
 
-// ─── Top-Up Modal ─────────────────────────────────────────────────────────────
-
-function TopUpModal({
-  modal,
-  userId,
-  onClose,
-  onSuccess,
-}: {
-  modal: TopUpModal
-  userId: string
-  onClose: () => void
-  onSuccess: () => void
-}) {
-  const supabase = createClient()
-  const [amount, setAmount] = useState(String(Math.max(modal.prefillAmount, 0)))
-  const [remarks, setRemarks] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleSubmit = async () => {
-    const num = Number(amount)
-    if (!num || num <= 0) {
-      setError('Enter a valid amount')
-      return
-    }
-    setLoading(true)
-    setError(null)
-    try {
-      const { error: err } = await supabase.from('cash_transactions').insert({
-        store_id: modal.storeId,
-        created_by: userId,
-        type: 'credit',
-        amount: num,
-        remarks: remarks || 'Petty cash top-up',
-      })
-      if (err) throw err
-      onSuccess()
-      onClose()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to top up')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-100">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-5">
-          <div>
-            <div className="flex items-center gap-2 mb-0.5">
-              <ArrowUpCircle className="w-5 h-5 text-indigo-600" />
-              <h3 className="font-bold text-slate-800 text-lg">Cash Top-Up</h3>
-            </div>
-            <p className="text-sm text-slate-500">{modal.storeName}</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Recommended callout */}
-        {modal.prefillAmount > 0 && (
-          <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 mb-4 flex items-center justify-between">
-            <span className="text-xs text-indigo-600 font-medium">Recommended Top-Up</span>
-            <span className="text-sm font-bold text-indigo-700">
-              {formatCurrency(modal.prefillAmount)}
-            </span>
-          </div>
-        )}
-
-        {/* Amount */}
-        <div className="mb-3">
-          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-            Amount (₹)
-          </label>
-          <input
-            type="number"
-            min="1"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="w-full text-lg font-semibold border border-slate-200 rounded-xl px-4 py-2.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-            placeholder="0.00"
-          />
-        </div>
-
-        {/* Remarks */}
-        <div className="mb-5">
-          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-            Remarks
-          </label>
-          <input
-            type="text"
-            value={remarks}
-            onChange={(e) => setRemarks(e.target.value)}
-            className="w-full text-sm border border-slate-200 rounded-xl px-4 py-2.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-            placeholder="Optional note..."
-          />
-        </div>
-
-        {error && (
-          <p className="text-xs text-red-500 font-medium mb-3">{error}</p>
-        )}
-
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={onClose}
-            className="flex-1"
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            loading={loading}
-            className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white"
-          >
-            <ArrowUpCircle className="w-4 h-4 mr-1.5" />
-            Confirm Top-Up
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
+ 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function ReportsPage() {
@@ -286,14 +147,7 @@ export default function ReportsPage() {
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([])
   const [clusters, setClusters] = useState<{ id: string; name: string }[]>([])
 
-  // Top-up modal
-  const [modal, setModal] = useState<TopUpModal>({
-    open: false,
-    storeId: '',
-    storeName: '',
-    prefillAmount: 0,
-  })
-
+ 
   // ── Fetch all data ────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -453,23 +307,14 @@ export default function ReportsPage() {
 
   return (
     <div className="max-w-7xl space-y-6">
-      {/* ── Top-Up Modal ────────────────────────────────────────────────── */}
-      {modal.open && (
-        <TopUpModal
-          modal={modal}
-          userId={user.id}
-          onClose={() => setModal((m) => ({ ...m, open: false }))}
-          onSuccess={() => setRefreshKey((k) => k + 1)}
-        />
-      )}
-
+ 
       {/* ── Page Header ─────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2 mb-0.5">
             <Wallet className="w-5 h-5 text-indigo-600" />
             <h2 className="text-xl font-bold text-slate-800">
-              Petty Cash Operations Console
+              Treasury Oversight Console
             </h2>
           </div>
           <p className="text-sm text-slate-500">
@@ -608,7 +453,6 @@ export default function ReportsPage() {
                       { label: 'Pending', align: 'right' },
                       { label: 'Utilization', align: 'right' },
                       { label: 'Top-Up Needed', align: 'right' },
-                      { label: '', align: 'right' },
                     ].map((col) => (
                       <th
                         key={col.label}
@@ -679,22 +523,7 @@ export default function ReportsPage() {
                             <span className="text-xs text-slate-300">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() =>
-                              setModal({
-                                open: true,
-                                storeId: m.storeId,
-                                storeName: m.storeName,
-                                prefillAmount: m.recommendedTopUp,
-                              })
-                            }
-                            className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-sm whitespace-nowrap"
-                          >
-                            <ArrowUpCircle className="w-3 h-3" />
-                            Top Up
-                          </button>
-                        </td>
+ 
                       </tr>
                     )
                   })}
@@ -737,7 +566,6 @@ export default function ReportsPage() {
                       <td className="px-4 py-3 text-right text-sm font-bold text-indigo-600">
                         {formatCurrency(kpis.totalTopUp)}
                       </td>
-                      <td className="px-4 py-3" />
                     </tr>
                   </tfoot>
                 )}
@@ -805,21 +633,7 @@ export default function ReportsPage() {
                       </p>
                     </div>
                   </div>
-
-                  <button
-                    onClick={() =>
-                      setModal({
-                        open: true,
-                        storeId: m.storeId,
-                        storeName: m.storeName,
-                        prefillAmount: m.recommendedTopUp,
-                      })
-                    }
-                    className="w-full text-xs font-semibold py-1.5 rounded-lg bg-white/80 border border-slate-200 text-slate-700 hover:bg-white transition-all flex items-center justify-center gap-1"
-                  >
-                    <ArrowUpCircle className="w-3 h-3 text-indigo-500" />
-                    Top Up {m.storeName}
-                  </button>
+ 
                 </div>
               )
             })}

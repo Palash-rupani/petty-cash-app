@@ -1,6 +1,6 @@
 import { NormalizedStore, NormalizedExpense } from "@/types/normalized";
 import { ClusterTreasuryPosition } from "@/types/treasury";
-import { PENDING_STATUSES } from "@/lib/constants/expenseStatuses";
+import { normalizeExpenseStatus } from "@/types";
 
 export function computeClusterMatrix(
   stores: NormalizedStore[],
@@ -41,7 +41,8 @@ export function computeClusterMatrix(
 
   // Add pending exposure from all expenses
   expenses.forEach((e) => {
-    if ((PENDING_STATUSES as readonly string[]).includes(e.status)) {
+    // submitted = active treasury reservation awaiting cluster final approval
+    if (normalizeExpenseStatus(e.status) === "submitted") {
       const store = stores.find((s) => s.id === e.storeId);
       if (store && store.clusterId && map[store.clusterId]) {
         map[store.clusterId].pipelineExposure += e.amount;

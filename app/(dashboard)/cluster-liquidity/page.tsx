@@ -196,9 +196,11 @@ function UtilizationBar({ value }: { value: number }) {
 function RiskCard({
     pos,
     onTopUp,
+    canExecuteTreasury = false,
 }: {
     pos: StorePosition;
     onTopUp: () => void;
+    canExecuteTreasury?: boolean;
 }) {
     const accentBorder =
         pos.health === "negative" ? "border-l-red-400" : "border-l-amber-400";
@@ -222,15 +224,17 @@ function RiskCard({
                         </p>
                     )}
                 </div>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onTopUp}
-                    className="flex-shrink-0 whitespace-nowrap"
-                >
-                    <ArrowUpCircle className="w-3.5 h-3.5" />
-                    Top Up
-                </Button>
+                {canExecuteTreasury && (
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onTopUp}
+                        className="flex-shrink-0 whitespace-nowrap"
+                    >
+                        <ArrowUpCircle className="w-3.5 h-3.5" />
+                        Top Up
+                    </Button>
+                )}
             </div>
 
             <div className="grid grid-cols-2 gap-x-4 gap-y-3">
@@ -506,6 +510,7 @@ function ActivityRow({ item }: { item: ActivityItem }) {
 export default function ClusterLiquidityPage() {
     const { user, loading: authLoading } = useAuth();
     const supabase = createClient();
+    const canExecuteTreasury = user?.role === "cluster_manager";
 
     const [stores, setStores] = useState<StoreRow[]>([]);
     const [balances, setBalances] = useState<StoreAvailableBalance[]>([]);
@@ -923,6 +928,7 @@ export default function ClusterLiquidityPage() {
                                         key={pos.id}
                                         pos={pos}
                                         onTopUp={() => openTopup(pos)}
+                                        canExecuteTreasury={canExecuteTreasury}
                                     />
                                 ))}
                             </div>
@@ -1054,15 +1060,17 @@ export default function ClusterLiquidityPage() {
 
                                                 {/* Action */}
                                                 <td className="px-5 py-3.5">
-                                                    <Button
-                                                        variant="outline"
-                                                        size="sm"
-                                                        onClick={() => openTopup(pos)}
-                                                        className="whitespace-nowrap"
-                                                    >
-                                                        <ArrowUpCircle className="w-3.5 h-3.5" />
-                                                        Top Up
-                                                    </Button>
+                                                    {canExecuteTreasury && (
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={() => openTopup(pos)}
+                                                            className="whitespace-nowrap"
+                                                        >
+                                                            <ArrowUpCircle className="w-3.5 h-3.5" />
+                                                            Top Up
+                                                        </Button>
+                                                    )}
                                                 </td>
                                             </tr>
                                         ))}

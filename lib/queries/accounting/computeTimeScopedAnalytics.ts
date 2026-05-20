@@ -1,8 +1,6 @@
 import { AnalyticsContext, TimeScopedAnalytics } from "@/types/analytics";
 import { DateRangeFilter } from "@/lib/hooks/useDashboardFilters";
-import { PENDING_STATUSES } from "@/lib/constants/expenseStatuses";
-
-const APPROVED_STATUSES = ["accounting_approved", "synced_to_tally"];
+import { normalizeExpenseStatus } from "@/types";
 
 function isDateInRange(dateStr: string, range?: DateRangeFilter) {
   if (!range || range === "all") return true;
@@ -76,11 +74,13 @@ export function computeTimeScopedAnalytics(
     return isDateInRange(e.createdAt, filters.dateRange);
   });
 
+  // Use normalizeExpenseStatus so legacy DB states (cluster_approved,
+  // accounting_approved, synced_to_tally, etc.) all resolve correctly.
   const filteredApproved = filteredExpenses.filter((e) =>
-    APPROVED_STATUSES.includes(e.status)
+    normalizeExpenseStatus(e.status) === "approved"
   );
   const filteredPending = filteredExpenses.filter((e) =>
-    (PENDING_STATUSES as readonly string[]).includes(e.status)
+    normalizeExpenseStatus(e.status) === "submitted"
   );
 
   const filteredApprovedSpend = filteredApproved.reduce(

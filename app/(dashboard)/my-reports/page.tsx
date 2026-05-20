@@ -204,7 +204,7 @@ function LiquidityBadge({ balance, targetFloat }: { balance: number | null; targ
     const config = {
         healthy: { label: "Stable", dot: "bg-emerald-500", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
         low: { label: "Monitor Closely", dot: "bg-amber-500", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-        negative: { label: "Urgent Refill Needed", dot: "bg-red-500", cls: "bg-red-50 text-red-700 border-red-200" },
+        negative: { label: "Severe Liquidity Deficit", dot: "bg-red-500", cls: "bg-red-50 text-red-700 border-red-200" },
     } as const;
     const { label, dot, cls } = config[health];
     return (
@@ -304,6 +304,9 @@ export default function StoreManagerReportPage() {
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
         sixMonthsAgo.setDate(1);
+        // DB wide-net for backward compatibility: catches all legacy + current approved DB states.
+        // normalizeExpenseStatus() is applied below (line 317) to filter down to 'approved' only,
+        // ensuring legacy records (cluster_approved, accounting_approved) are included in the trend.
         const APPROVED_DB_STATUSES = ["approved", "accounting_approved", "synced_to_tally", "cluster_approved"];
         supabase.from("expenses")
             .select("amount, expense_month, status, created_at")
@@ -418,7 +421,7 @@ export default function StoreManagerReportPage() {
             return insights;
         }
         if (balance < 0) {
-            insights.push({ text: `Available balance is ${formatCurrency(Math.abs(balance))} below zero. Immediate top-up required.`, severity: "critical" });
+            insights.push({ text: `Available balance is ${formatCurrency(Math.abs(balance))} below zero. Severe liquidity deficit.`, severity: "critical" });
         } else if (targetFloat > 0 && balance < targetFloat * 0.25) {
             const refill = getRefillRecommendation(balance, targetFloat);
             insights.push({ text: `Available liquidity is critically low — below 25% of target float. Refill of ${formatCurrency(refill)} needed.`, severity: "critical" });
@@ -434,7 +437,7 @@ export default function StoreManagerReportPage() {
         }
 
         if (runway !== null && runway < 7) {
-            insights.push({ text: `At current burn rate, runway is ${runway} day${runway !== 1 ? "s" : ""} — refill urgently.`, severity: "critical" });
+            insights.push({ text: `At current burn rate, runway is ${runway} day${runway !== 1 ? "s" : ""} — liquidity exposure critical.`, severity: "critical" });
         } else if (runway !== null && runway < 14) {
             insights.push({ text: `Runway is ${runway} days at current burn rate. Monitor spending closely.`, severity: "warning" });
         }
@@ -690,7 +693,7 @@ export default function StoreManagerReportPage() {
                     sub={
                         runway === null
                             ? (avgDailyBurn <= 0 ? "Burn rate unavailable" : "Balance data unavailable")
-                            : runway < 7 ? "Refill urgently"
+                            : runway < 7 ? "Liquidity exposure critical"
                                 : runway < 14 ? "Monitor closely"
                                     : "Cash position healthy"
                     }

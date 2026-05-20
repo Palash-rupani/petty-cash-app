@@ -16,10 +16,14 @@ const STATUS_OPTIONS: { label: string; value: string }[] = [
   { label: 'All Statuses', value: '' },
   { label: 'Draft', value: 'draft' },
   { label: 'Submitted', value: 'submitted' },
-  { label: 'Cluster Approved', value: 'cluster_approved' },
-  { label: 'Cluster Rejected', value: 'cluster_rejected' },
-  { label: 'Accounting Approved', value: 'accounting_approved' },
-  { label: 'Accounting Rejected', value: 'accounting_rejected' },
+  // Current treasury lifecycle states
+  { label: 'Approved', value: 'approved' },
+  { label: 'Rejected', value: 'rejected' },
+  // Legacy DB states — preserved for audit trail access
+  { label: 'Cluster Approved (Legacy)', value: 'cluster_approved' },
+  { label: 'Cluster Rejected (Legacy)', value: 'cluster_rejected' },
+  { label: 'Accounting Approved (Legacy)', value: 'accounting_approved' },
+  { label: 'Accounting Rejected (Legacy)', value: 'accounting_rejected' },
 ]
 
 export default function ExpensesPage() {

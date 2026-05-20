@@ -50,7 +50,7 @@ const navItems: NavItem[] = [
     roles: ['cluster_manager', 'accounting'],
   },
   {
-    label: 'Reports',
+    label: 'Treasury Oversight',
     href: '/reports',
     icon: <BarChart3 size={18} />,
     roles: ['accounting'],
@@ -62,7 +62,7 @@ const navItems: NavItem[] = [
     roles: ['cluster_manager'],
   },
   {
-    label: 'Finance Dashboard',
+    label: 'Treasury Intelligence',
     href: '/accounting-dashboard',
     icon: <BarChart3 size={18} />,
     roles: ['accounting'],

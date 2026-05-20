@@ -365,7 +365,8 @@ function AccountingStats({ user: _user }: AccountingStatsProps) {
         supabase
           .from('expenses')
           .select('id')
-          .eq('status', 'cluster_approved'), // only what accounting must action
+          // cluster_approved = finalized by cluster, visible to accounting for governance/audit
+          .eq('status', 'cluster_approved'),
       ])
 
       const stores = storeRes.data ?? []
@@ -418,9 +419,9 @@ function AccountingStats({ user: _user }: AccountingStatsProps) {
 
       {/* 2. Total refill requirement to bring all stores to their target floats */}
       <StatCard
-        title="Refill Requirement"
+        title="Refill Exposure"
         value={formatCurrency(totalRefillNeeded)}
-        subtitle="To reach all target floats"
+        subtitle="Treasury gap to target"
         icon={
           <ArrowUpCircle
             size={18}

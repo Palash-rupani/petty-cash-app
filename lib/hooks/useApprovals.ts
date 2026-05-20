@@ -44,11 +44,13 @@ export function useApprovals() {
       const role = userData?.role
 
       /**
-       * Cluster managers:
-       * operational treasury approvals
+       * Cluster managers: fetch 'submitted' expenses — these are active
+       * treasury reservations awaiting final cluster approval/rejection.
        *
-       * Accounting:
-       * supervisory review only
+       * Accounting (governance mode): fetch 'cluster_approved' expenses —
+       * these have already been operationally finalized by cluster managers.
+       * Accounting sees them for supervisory review and audit recording only.
+       * They cannot approve or reject via this hook (blocked in approveExpense/rejectExpense).
        */
       const statusFilter =
         role === 'accounting'
