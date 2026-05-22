@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency } from "@/lib/utils/formatCurrency";
+import { formatCurrency, compactCurrency } from "@/lib/utils/formatCurrency";
 import { getClusterAvailableBalances } from "@/lib/finance/getClusterAvailableBalances";
 import { getCashHealth } from "@/lib/finance/getCashHealth";
 import { getRefillRecommendation } from "@/lib/finance/getRefillRecommendation";
@@ -115,6 +115,13 @@ function SectionHeading({ title, sub }: { title: string; sub?: string }) {
     );
 }
 
+function kpiValueSize(value: string): string {
+    const n = value.length
+    if (n <= 4) return 'text-3xl'
+    if (n <= 7) return 'text-2xl'
+    return 'text-xl'
+}
+
 function KpiCard({
     icon, bg, label, value, sub, subColor = "text-slate-400",
 }: {
@@ -122,15 +129,15 @@ function KpiCard({
     sub?: string; subColor?: string;
 }) {
     return (
-        <Card className="rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow duration-200">
-            <CardContent className="pt-5 pb-5">
-                <div className="flex items-start gap-3">
-                    <div className={`p-2.5 rounded-xl ${bg} flex-shrink-0`}>{icon}</div>
-                    <div>
-                        <p className="text-xs font-medium text-slate-500 leading-tight">{label}</p>
-                        <p className="text-xl font-bold text-slate-900 mt-0.5 leading-tight tabular-nums">{value}</p>
-                        {sub && <p className={`text-xs mt-0.5 font-medium ${subColor}`}>{sub}</p>}
-                    </div>
+        <Card className="rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
+            <CardContent className="p-5 lg:p-6 flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-3">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] leading-snug">{label}</p>
+                    <div className={`p-2 rounded-xl ${bg} flex-shrink-0`}>{icon}</div>
+                </div>
+                <div>
+                    <p className={`font-bold text-slate-900 tabular-nums leading-none ${kpiValueSize(value)}`}>{value}</p>
+                    {sub && <p className={`text-xs mt-1.5 font-medium leading-snug ${subColor}`}>{sub}</p>}
                 </div>
             </CardContent>
         </Card>
@@ -167,8 +174,8 @@ function LoadingState() {
         <div className="space-y-6 animate-pulse">
             <div className="h-10 w-64 bg-slate-100 rounded-xl" />
             <div className="h-14 bg-slate-100 rounded-xl" />
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-4">
-                {[...Array(5)].map((_, i) => <div key={i} className="h-28 bg-slate-100 rounded-2xl" />)}
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-5">
+                {[...Array(5)].map((_, i) => <div key={i} className="h-[110px] bg-slate-100 rounded-2xl" />)}
             </div>
             <div className="h-72 bg-slate-100 rounded-2xl" />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -512,17 +519,17 @@ storeRows.forEach((s) => {
                 ENTERPRISE TREASURY KPIs (GLOBAL STATE)
             ══════════════════════════════════════════════════════════════════════ */}
             <SectionHeading title="Global Executive State" sub="Real-time un-filtered enterprise totals" />
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-4 mb-10">
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-5 mb-10">
                 <KpiCard
                     icon={<Landmark className="w-5 h-5 text-indigo-600" />} bg="bg-indigo-50"
                     label="Total Available Balance"
-                    value={formatCurrency(totalTreasuryBalance)}
+                    value={compactCurrency(totalTreasuryBalance)}
                     sub={`${stores.length} active stores`}
                 />
                 <KpiCard
                     icon={<RefreshCw className="w-5 h-5 text-amber-600" />} bg="bg-amber-50"
                     label="Total Refill Requirement"
-                    value={formatCurrency(totalRefillRequirement)}
+                    value={compactCurrency(totalRefillRequirement)}
                     sub="Enterprise-wide capital need"
                     subColor={totalRefillRequirement > 0 ? "text-amber-600" : "text-emerald-600"}
                 />
@@ -536,13 +543,13 @@ storeRows.forEach((s) => {
                 <KpiCard
                     icon={<Activity className="w-5 h-5 text-blue-600" />} bg="bg-blue-50"
                     label="Pending Exposure"
-                    value={formatCurrency(enterprisePendingExposure)}
+                    value={compactCurrency(enterprisePendingExposure)}
                     sub="Total unapproved pipeline"
                 />
                 <KpiCard
                     icon={<Zap className="w-5 h-5 text-orange-600" />} bg="bg-orange-50"
                     label="Max Cluster Exposure"
-                    value={largestExposureCluster ? formatCurrency(largestExposureCluster.pendingExposure) : "—"}
+                    value={largestExposureCluster ? compactCurrency(largestExposureCluster.pendingExposure) : "—"}
                     sub={largestExposureCluster?.name ?? "No exposure"}
                 />
             </div>
@@ -632,9 +639,9 @@ storeRows.forEach((s) => {
             ══════════════════════════════════════════════════════════════════════ */}
             <SectionHeading title="Time-Scoped Analytics" sub="Filtered by selected date range and stores" />
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                <KpiCard icon={<BarChart2 className="w-4 h-4 text-emerald-600" />} bg="bg-emerald-50" label="Filtered Approved Spend" value={formatCurrency(filteredApproved.reduce((s, e) => s + e.amount, 0))} />
-                <KpiCard icon={<Clock className="w-4 h-4 text-amber-500" />} bg="bg-amber-50" label="Filtered Pending Pipeline" value={formatCurrency(filteredPending.reduce((s, e) => s + e.amount, 0))} />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+                <KpiCard icon={<BarChart2 className="w-4 h-4 text-emerald-600" />} bg="bg-emerald-50" label="Filtered Approved Spend" value={compactCurrency(filteredApproved.reduce((s, e) => s + e.amount, 0))} />
+                <KpiCard icon={<Clock className="w-4 h-4 text-amber-500" />} bg="bg-amber-50" label="Filtered Pending Pipeline" value={compactCurrency(filteredPending.reduce((s, e) => s + e.amount, 0))} />
                 <KpiCard icon={<TrendingUp className="w-4 h-4 text-indigo-600" />} bg="bg-indigo-50" label="Filtered Expense Count" value={String(filteredExpenses.length)} />
             </div>
 

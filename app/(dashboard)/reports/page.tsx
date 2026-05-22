@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
-import { formatCurrency } from '@/lib/utils/formatCurrency'
+import { formatCurrency, compactCurrency } from '@/lib/utils/formatCurrency'
 import { normalizeExpenseStatus } from '@/types'
 import { exportCSV } from '@/lib/utils/exportCSV'
 import { getClusterName } from '@/lib/utils/getClusterName'
@@ -104,6 +104,44 @@ const STATUS_CONFIG = {
     icon: XCircle,
   },
 } as const
+
+// ─── KPI Card ─────────────────────────────────────────────────────────────────
+
+function kpiValueSize(value: string): string {
+  const n = value.length
+  if (n <= 4) return 'text-3xl'
+  if (n <= 7) return 'text-2xl'
+  return 'text-xl'
+}
+
+interface KpiCardProps {
+  label: string
+  value: string
+  sub?: string
+  icon: React.ElementType
+  iconBg: string
+  iconColor: string
+  valueColor?: string
+}
+
+function KpiCard({ label, value, sub, icon: Icon, iconBg, iconColor, valueColor = 'text-slate-900' }: KpiCardProps) {
+  return (
+    <Card className="rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
+      <div className="p-5 lg:p-6 flex flex-col gap-3">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] leading-snug">{label}</p>
+          <div className={`p-2 rounded-xl ${iconBg} flex-shrink-0`}>
+            <Icon className={`w-4 h-4 ${iconColor}`} />
+          </div>
+        </div>
+        <div>
+          <p className={`font-bold tabular-nums leading-none ${kpiValueSize(value)} ${valueColor}`}>{value}</p>
+          {sub && <p className="text-xs text-slate-400 mt-1.5 font-medium leading-snug">{sub}</p>}
+        </div>
+      </div>
+    </Card>
+  )
+}
 
 // ─── Utilization bar ─────────────────────────────────────────────────────────
 
@@ -337,58 +375,42 @@ export default function ReportsPage() {
       </div>
 
       {/* ── 1. Executive KPIs ───────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          {
-            label: 'Total Float',
-            value: formatCurrency(kpis.totalFloat),
-            sub: `${storeMetrics.length} stores`,
-            icon: Building2,
-            color: 'text-slate-800',
-            iconBg: 'bg-slate-100',
-            iconColor: 'text-slate-500',
-          },
-          {
-            label: 'Current Cash Balance',
-            value: formatCurrency(kpis.totalBalance),
-            sub: `${kpis.overallUtil.toFixed(1)}% utilization`,
-            icon: Wallet,
-            color: 'text-indigo-700',
-            iconBg: 'bg-indigo-50',
-            iconColor: 'text-indigo-500',
-          },
-          {
-            label: 'Total Top-Up Needed',
-            value: formatCurrency(kpis.totalTopUp),
-            sub: `${kpis.criticalCount} critical · ${kpis.lowCount} low`,
-            icon: ArrowUpCircle,
-            color: kpis.criticalCount > 0 ? 'text-red-600' : 'text-amber-600',
-            iconBg: kpis.criticalCount > 0 ? 'bg-red-50' : 'bg-amber-50',
-            iconColor: kpis.criticalCount > 0 ? 'text-red-500' : 'text-amber-500',
-          },
-          {
-            label: 'Approved Spend',
-            value: formatCurrency(kpis.totalApproved),
-            sub: `${formatCurrency(kpis.totalPending)} pending`,
-            icon: TrendingUp,
-            color: 'text-emerald-700',
-            iconBg: 'bg-emerald-50',
-            iconColor: 'text-emerald-500',
-          },
-        ].map((kpi) => (
-          <Card key={kpi.label}>
-            <div className="px-4 py-4 flex items-start gap-3">
-              <div className={`p-2 rounded-xl ${kpi.iconBg} flex-shrink-0`}>
-                <kpi.icon className={`w-4 h-4 ${kpi.iconColor}`} />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs text-slate-500 font-medium truncate">{kpi.label}</p>
-                <p className={`text-lg font-bold mt-0.5 ${kpi.color}`}>{kpi.value}</p>
-                <p className="text-xs text-slate-400 mt-0.5">{kpi.sub}</p>
-              </div>
-            </div>
-          </Card>
-        ))}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+        <KpiCard
+          label="Total Float"
+          value={compactCurrency(kpis.totalFloat)}
+          sub={`${storeMetrics.length} stores`}
+          icon={Building2}
+          iconBg="bg-slate-100"
+          iconColor="text-slate-500"
+        />
+        <KpiCard
+          label="Current Cash Balance"
+          value={compactCurrency(kpis.totalBalance)}
+          sub={`${kpis.overallUtil.toFixed(1)}% utilization`}
+          icon={Wallet}
+          iconBg="bg-indigo-50"
+          iconColor="text-indigo-500"
+          valueColor="text-indigo-700"
+        />
+        <KpiCard
+          label="Total Top-Up Needed"
+          value={compactCurrency(kpis.totalTopUp)}
+          sub={`${kpis.criticalCount} critical · ${kpis.lowCount} low`}
+          icon={ArrowUpCircle}
+          iconBg={kpis.criticalCount > 0 ? 'bg-red-50' : 'bg-amber-50'}
+          iconColor={kpis.criticalCount > 0 ? 'text-red-500' : 'text-amber-500'}
+          valueColor={kpis.criticalCount > 0 ? 'text-red-600' : 'text-amber-600'}
+        />
+        <KpiCard
+          label="Approved Spend"
+          value={compactCurrency(kpis.totalApproved)}
+          sub={`${compactCurrency(kpis.totalPending)} pending`}
+          icon={TrendingUp}
+          iconBg="bg-emerald-50"
+          iconColor="text-emerald-500"
+          valueColor="text-emerald-700"
+        />
       </div>
 
       {/* ── 2. Store Cash Management Console ───────────────────────────── */}
@@ -665,37 +687,37 @@ export default function ReportsPage() {
         </div>
 
         {/* Summary spend cards (preserved from original page) */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
           {[
             {
               label: 'Total Expenses',
-              value: formatCurrency(
+              value: compactCurrency(
                 storeMetrics.reduce((s, m) => s + m.approvedSpend + m.pendingSpend + m.rejectedSpend, 0)
               ),
-              color: 'text-slate-800',
+              color: 'text-slate-900',
             },
             {
               label: 'Approved',
-              value: formatCurrency(kpis.totalApproved),
+              value: compactCurrency(kpis.totalApproved),
               color: 'text-emerald-600',
             },
             {
               label: 'Pending',
-              value: formatCurrency(kpis.totalPending),
+              value: compactCurrency(kpis.totalPending),
               color: 'text-amber-600',
             },
             {
               label: 'Rejected',
-              value: formatCurrency(
+              value: compactCurrency(
                 storeMetrics.reduce((s, m) => s + m.rejectedSpend, 0)
               ),
               color: 'text-red-500',
             },
           ].map((item) => (
-            <Card key={item.label}>
-              <div className="px-4 py-4">
-                <p className="text-xs text-slate-500 font-medium">{item.label}</p>
-                <p className={`text-xl font-bold mt-1 ${item.color}`}>{item.value}</p>
+            <Card key={item.label} className="rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
+              <div className="p-5 lg:p-6">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] leading-snug">{item.label}</p>
+                <p className={`font-bold tabular-nums leading-none mt-2 ${kpiValueSize(item.value)} ${item.color}`}>{item.value}</p>
               </div>
             </Card>
           ))}

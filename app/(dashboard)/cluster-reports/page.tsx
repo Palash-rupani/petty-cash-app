@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency } from "@/lib/utils/formatCurrency";
+import { formatCurrency, compactCurrency } from "@/lib/utils/formatCurrency";
 import { getClusterAvailableBalances } from "@/lib/finance/getClusterAvailableBalances";
 import { getCashHealth } from "@/lib/finance/getCashHealth";
 import { getRefillRecommendation } from "@/lib/finance/getRefillRecommendation";
@@ -168,6 +168,13 @@ function SectionHeading({ title, icon, subtitle }: { title: string; icon?: React
     );
 }
 
+function kpiValueSize(value: string): string {
+    const n = value.length
+    if (n <= 4) return 'text-3xl'
+    if (n <= 7) return 'text-2xl'
+    return 'text-xl'
+}
+
 function TreasuryStatCard({
     icon, bg, label, value, sub, subColor = "text-slate-400", trend,
 }: {
@@ -175,22 +182,26 @@ function TreasuryStatCard({
     value: string; sub?: string; subColor?: string; trend?: "up" | "down" | "neutral";
 }) {
     return (
-        <Card className="rounded-xl border border-slate-200 shadow-sm h-full hover:shadow-md transition-shadow">
-            <CardContent className="pt-5 pb-5">
-                <div className="flex items-start gap-3">
-                    <div className={`p-2.5 rounded-lg ${bg} flex-shrink-0 mt-0.5`}>{icon}</div>
-                    <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium text-slate-500 leading-tight uppercase tracking-wide">{label}</p>
-                        <p className="text-2xl font-bold text-slate-900 mt-1.5 leading-tight tabular-nums">{value}</p>
-                        {sub && <p className={`text-xs mt-1.5 font-medium ${subColor}`}>{sub}</p>}
+        <Card className="rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
+            <CardContent className="p-5 lg:p-6 flex flex-col gap-3">
+                {/* Label row: label left, icon + trend indicator right */}
+                <div className="flex items-start justify-between gap-2">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] leading-snug">{label}</p>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {trend && (
+                            <span>
+                                {trend === "up" && <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />}
+                                {trend === "down" && <TrendingDown className="w-3.5 h-3.5 text-red-500" />}
+                                {trend === "neutral" && <Zap className="w-3.5 h-3.5 text-slate-300" />}
+                            </span>
+                        )}
+                        <div className={`p-2 rounded-xl ${bg} flex-shrink-0`}>{icon}</div>
                     </div>
-                    {trend && (
-                        <div className="flex-shrink-0">
-                            {trend === "up" && <TrendingUp className="w-4 h-4 text-emerald-500" />}
-                            {trend === "down" && <TrendingDown className="w-4 h-4 text-red-500" />}
-                            {trend === "neutral" && <Zap className="w-4 h-4 text-slate-300" />}
-                        </div>
-                    )}
+                </div>
+                {/* Value — full size, never clipped */}
+                <div>
+                    <p className={`font-bold text-slate-900 tabular-nums leading-none ${kpiValueSize(value)}`}>{value}</p>
+                    {sub && <p className={`text-xs mt-1.5 font-medium leading-snug ${subColor}`}>{sub}</p>}
                 </div>
             </CardContent>
         </Card>
@@ -229,8 +240,8 @@ function LoadingState() {
         <div className="space-y-6 animate-pulse">
             <div className="h-8 w-56 bg-slate-100 rounded-lg" />
             <div className="h-12 bg-slate-100 rounded-xl" />
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4">
-                {[...Array(6)].map((_, i) => <div key={i} className="h-28 bg-slate-100 rounded-xl" />)}
+            <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-6 gap-5">
+                {[...Array(6)].map((_, i) => <div key={i} className="h-[110px] bg-slate-100 rounded-2xl" />)}
             </div>
             <div className="h-48 bg-slate-100 rounded-xl" />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -659,12 +670,12 @@ export default function ClusterTreasuryDashboard() {
                 icon={<Eye className="w-4 h-4" />}
                 subtitle="Cluster liquidity position, reserved exposure, and refill obligations"
             />
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 mb-10">
+            <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-6 gap-5 mb-10">
                 <TreasuryStatCard
                     icon={<Landmark className="w-4 h-4 text-indigo-600" />}
                     bg="bg-indigo-50"
                     label="Available Liquidity"
-                    value={formatCurrency(clusterLiquidity)}
+                    value={compactCurrency(clusterLiquidity)}
                     sub="Operational cash"
                     subColor={clusterLiquidity < 0 ? "text-red-600" : "text-slate-400"}
                     trend={clusterLiquidity >= totalApproved ? "up" : clusterLiquidity < 0 ? "down" : "neutral"}
@@ -673,7 +684,7 @@ export default function ClusterTreasuryDashboard() {
                     icon={<Wallet className="w-4 h-4 text-cyan-600" />}
                     bg="bg-cyan-50"
                     label="Reserved Exposure"
-                    value={formatCurrency(totalReserved)}
+                    value={compactCurrency(totalReserved)}
                     sub="Pending reservations"
                     subColor="text-slate-400"
                 />
@@ -681,7 +692,7 @@ export default function ClusterTreasuryDashboard() {
                     icon={<RefreshCw className="w-4 h-4 text-amber-600" />}
                     bg="bg-amber-50"
                     label="Refill Required"
-                    value={totalRefillNeeded > 0 ? formatCurrency(totalRefillNeeded) : "None"}
+                    value={totalRefillNeeded > 0 ? compactCurrency(totalRefillNeeded) : "None"}
                     sub="To restore floats"
                     subColor={totalRefillNeeded > 0 ? "text-amber-600" : "text-emerald-600"}
                     trend={totalRefillNeeded > 0 ? "down" : "up"}
@@ -700,7 +711,7 @@ export default function ClusterTreasuryDashboard() {
                     bg="bg-orange-50"
                     label="Pending Exposure"
                     value={pendingExposurePct !== null ? `${pendingExposurePct.toFixed(0)}%` : "—"}
-                    sub={`${formatCurrency(totalPending)} locked`}
+                    sub={`${compactCurrency(totalPending)} locked`}
                     subColor={
                         pendingExposurePct !== null && pendingExposurePct > 60
                             ? "text-red-600"

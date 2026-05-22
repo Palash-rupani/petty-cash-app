@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency } from "@/lib/utils/formatCurrency";
+import { formatCurrency, compactCurrency } from "@/lib/utils/formatCurrency";
 import {
     getClusterAvailableBalances,
     type StoreAvailableBalance,
@@ -123,6 +123,13 @@ function SectionHeading({ title }: { title: string }) {
     );
 }
 
+function kpiValueSize(value: string): string {
+    const n = value.length
+    if (n <= 4) return 'text-3xl'
+    if (n <= 7) return 'text-2xl'
+    return 'text-xl'
+}
+
 function StatCard({
     icon,
     bg,
@@ -141,17 +148,19 @@ function StatCard({
     accentClass?: string;
 }) {
     return (
-        <Card className="rounded-xl border border-slate-200 shadow-sm h-full overflow-hidden">
+        <Card className="rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
             {accentClass && <div className={`h-1 ${accentClass}`} />}
-            <CardContent className="flex items-start gap-3 px-5 py-5">
-                <div className={`p-2 rounded-lg ${bg} flex-shrink-0 mt-0.5`}>{icon}</div>
-                <div className="min-w-0">
-                    <p className="text-xs font-medium text-slate-500 leading-tight">{label}</p>
-                    <p className="text-xl font-bold text-slate-900 mt-1 leading-tight tabular-nums">
+            <CardContent className="p-5 lg:p-6 flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-3">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] leading-snug">{label}</p>
+                    <div className={`p-2 rounded-xl ${bg} flex-shrink-0`}>{icon}</div>
+                </div>
+                <div>
+                    <p className={`font-bold text-slate-900 tabular-nums leading-none ${kpiValueSize(value)}`}>
                         {value}
                     </p>
                     {sub && (
-                        <p className={`text-xs mt-1 font-medium ${subColor}`}>{sub}</p>
+                        <p className={`text-xs mt-1.5 font-medium leading-snug ${subColor}`}>{sub}</p>
                     )}
                 </div>
             </CardContent>
@@ -289,9 +298,9 @@ function LoadingState() {
     return (
         <div className="space-y-6 animate-pulse">
             <div className="h-8 w-56 bg-slate-100 rounded-lg" />
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
                 {[...Array(4)].map((_, i) => (
-                    <div key={i} className="h-28 bg-slate-100 rounded-xl" />
+                    <div key={i} className="h-[110px] bg-slate-100 rounded-2xl" />
                 ))}
             </div>
             <div className="h-px bg-slate-100 rounded" />
@@ -833,12 +842,12 @@ export default function ClusterLiquidityPage() {
                         SECTION 1 — Treasury Overview KPIs
                     ════════════════════════════════════════════════════════ */}
                     <SectionHeading title="Treasury Overview" />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-5 mb-8">
                         <StatCard
                             icon={<Wallet className="w-4 h-4 text-emerald-600" />}
                             bg="bg-emerald-50"
                             label="Total Available Liquidity"
-                            value={formatCurrency(kpis.totalAvailable)}
+                            value={compactCurrency(kpis.totalAvailable)}
                             sub={
                                 kpis.totalAvailable < 0
                                     ? "Cluster is overdrawn"
@@ -855,7 +864,7 @@ export default function ClusterLiquidityPage() {
                             icon={<Lock className="w-4 h-4 text-amber-600" />}
                             bg="bg-amber-50"
                             label="Total Reserved Exposure"
-                            value={formatCurrency(kpis.totalReserved)}
+                            value={compactCurrency(kpis.totalReserved)}
                             sub={
                                 kpis.totalReserved > 0
                                     ? "Active reservations pending approval"
@@ -891,7 +900,7 @@ export default function ClusterLiquidityPage() {
                             label="Total Refill Required"
                             value={
                                 kpis.totalRefill > 0
-                                    ? formatCurrency(kpis.totalRefill)
+                                    ? compactCurrency(kpis.totalRefill)
                                     : "—"
                             }
                             sub={

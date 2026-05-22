@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { getAvailableBalance } from '@/lib/finance/getAvailableBalance'
-import { formatCurrency } from '@/lib/utils/formatCurrency'
+import { formatCurrency, compactCurrency } from '@/lib/utils/formatCurrency'
 import { getCashHealth, CASH_HEALTH_CONFIG } from '@/lib/finance/getCashHealth'
 import { getRefillRecommendation } from '@/lib/finance/getRefillRecommendation'
 import {
@@ -14,6 +14,16 @@ import { Card, CardContent } from '@/components/ui/Card'
 import type { User } from '@/types'
 
 // ─── Shared primitives ────────────────────────────────────────────────────────
+
+/** Returns Tailwind text-size class based on value string length.
+ *  compactCurrency() ensures most values are ≤8 chars — this adds
+ *  visual weight for short values (counts, "—") vs compact amounts. */
+function kpiValueSize(value: string): string {
+  const n = value.length
+  if (n <= 4) return 'text-3xl'   // "5", "12", "—", "None"
+  if (n <= 7) return 'text-2xl'   // "₹10.9L", "₹1.2Cr", "₹9,999"
+  return 'text-xl'                // "12 days", fallback
+}
 
 interface StatCardProps {
   title: string
@@ -28,15 +38,25 @@ interface StatCardProps {
 
 function StatCard({ title, value, subtitle, icon, iconBg, valueColor }: StatCardProps) {
   return (
-    <Card>
-      <CardContent className="flex items-start gap-4 py-5">
-        <div className={`p-2.5 rounded-lg shrink-0 ${iconBg}`}>{icon}</div>
-        <div className="min-w-0">
-          <p className="text-sm text-slate-500 font-medium">{title}</p>
-          <p className={`text-2xl font-bold mt-0.5 tabular-nums ${valueColor ?? 'text-slate-800'}`}>
+    <Card className="rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
+      <CardContent className="p-5 lg:p-6 flex flex-col gap-3">
+        {/* Label row — icon right-aligned for clean separation */}
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] leading-snug">
+            {title}
+          </p>
+          <div className={`p-2 rounded-xl shrink-0 ${iconBg}`}>{icon}</div>
+        </div>
+        {/* Value row — never clipped; compactCurrency ensures brevity */}
+        <div>
+          <p className={`font-bold tabular-nums leading-none ${kpiValueSize(value)} ${valueColor ?? 'text-slate-900'}`}>
             {value}
           </p>
-          {subtitle && <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>}
+          {subtitle && (
+            <p className="text-xs text-slate-400 mt-1.5 font-medium leading-snug">
+              {subtitle}
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -44,10 +64,16 @@ function StatCard({ title, value, subtitle, icon, iconBg, valueColor }: StatCard
 }
 
 function SkeletonCards({ count }: { count: number }) {
+  const gridMap: Record<number, string> = {
+    3: 'grid-cols-1 sm:grid-cols-3',
+    4: 'grid-cols-2 xl:grid-cols-4',
+    6: 'grid-cols-2 md:grid-cols-3 2xl:grid-cols-6',
+  }
+  const gridCls = gridMap[count] ?? 'grid-cols-2 xl:grid-cols-4'
   return (
-    <div className={`grid grid-cols-2 sm:grid-cols-${count} gap-4 animate-pulse`}>
+    <div className={`grid ${gridCls} gap-5 animate-pulse`}>
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="h-24 bg-slate-100 rounded-xl" />
+        <div key={i} className="h-[120px] bg-slate-100 rounded-2xl" />
       ))}
     </div>
   )
@@ -150,16 +176,16 @@ function StoreManagerStats({ user }: StoreManagerStatsProps) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
         {/* 1. Available Balance — availableBalance = actualBalance − reservedAmount */}
         <StatCard
           title="Available Balance"
-          value={balance !== null ? formatCurrency(balance) : '—'}
+          value={balance !== null ? compactCurrency(balance) : '—'}
           subtitle={
             isNegative
               ? 'Negative — refill required'
               : reservedAmount > 0
-                ? `Reserved: ${formatCurrency(reservedAmount)}`
+                ? `Reserved: ${compactCurrency(reservedAmount)}`
                 : 'No active reservations'
           }
           icon={
@@ -175,7 +201,7 @@ function StoreManagerStats({ user }: StoreManagerStatsProps) {
         {/* 2. Target Float — operational cash goal, not a spending cap */}
         <StatCard
           title="Target Float"
-          value={formatCurrency(targetFloat)}
+          value={compactCurrency(targetFloat)}
           subtitle="Ideal cash on hand"
           icon={<Target size={18} className="text-slate-500" />}
           iconBg="bg-slate-100"
@@ -184,7 +210,7 @@ function StoreManagerStats({ user }: StoreManagerStatsProps) {
         {/* 3. Top-Up Needed — how far below the target float we are */}
         <StatCard
           title="Top-Up Needed"
-          value={topUp !== null ? formatCurrency(topUp) : '—'}
+          value={topUp !== null ? compactCurrency(topUp) : '—'}
           subtitle={topUp === 0 ? 'Float is sufficient' : 'Recommended refill'}
           icon={
             <ArrowUpCircle
@@ -287,7 +313,7 @@ function ClusterManagerStats({ user }: ClusterManagerStatsProps) {
   if (loading) return <SkeletonCards count={4} />
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {/* 1. Pending approvals — submitted expenses awaiting cluster action */}
       <StatCard
         title="Pending Approvals"
@@ -324,7 +350,7 @@ function ClusterManagerStats({ user }: ClusterManagerStatsProps) {
       {/* 4. Total refill needed across all stores in cluster */}
       <StatCard
         title="Refill Required"
-        value={formatCurrency(totalRefillNeeded)}
+        value={compactCurrency(totalRefillNeeded)}
         subtitle="Across all stores"
         icon={
           <ArrowUpCircle
@@ -401,11 +427,11 @@ function AccountingStats({ user: _user }: AccountingStatsProps) {
   const balanceNegative = totalBalance !== null && totalBalance < 0
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {/* 1. Total treasury balance — sum of all store ledger balances */}
       <StatCard
         title="Total Treasury Balance"
-        value={totalBalance !== null ? formatCurrency(totalBalance) : '—'}
+        value={totalBalance !== null ? compactCurrency(totalBalance) : '—'}
         subtitle="Across all stores"
         icon={
           <Wallet
@@ -420,7 +446,7 @@ function AccountingStats({ user: _user }: AccountingStatsProps) {
       {/* 2. Total refill requirement to bring all stores to their target floats */}
       <StatCard
         title="Refill Exposure"
-        value={formatCurrency(totalRefillNeeded)}
+        value={compactCurrency(totalRefillNeeded)}
         subtitle="Treasury gap to target"
         icon={
           <ArrowUpCircle

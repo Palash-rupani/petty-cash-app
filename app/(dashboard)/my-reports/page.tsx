@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency } from "@/lib/utils/formatCurrency";
+import { formatCurrency, compactCurrency } from "@/lib/utils/formatCurrency";
 import { getAvailableBalance } from '@/lib/finance/getAvailableBalance'
 import { getCashHealth } from '@/lib/finance/getCashHealth'
 import { getRefillRecommendation } from '@/lib/finance/getRefillRecommendation'
@@ -581,17 +581,17 @@ export default function StoreManagerReportPage() {
             ══════════════════════════════════════════════════════════════════ */}
             <SectionHeading title="Treasury Overview" />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 mb-4">
                 {/* Available Balance — wide card; shows all three treasury metrics */}
                 <div className="sm:col-span-2 xl:col-span-2">
-                    <Card className="h-full rounded-xl border border-slate-200 shadow-sm">
-                        <CardContent className="flex flex-col justify-between h-full px-6 py-5">
+                    <Card className="h-full rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
+                        <CardContent className="flex flex-col justify-between h-full p-5 lg:p-6">
                             <div>
-                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] mb-4">
                                     Available Balance
                                 </p>
                                 {balance !== null ? (
-                                    <p className={`text-4xl font-bold tracking-tight tabular-nums ${balance < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                                    <p className={`text-3xl font-bold tracking-tight tabular-nums ${balance < 0 ? 'text-red-600' : 'text-slate-900'}`}>
                                         {formatCurrency(balance)}
                                     </p>
                                 ) : (
@@ -603,14 +603,14 @@ export default function StoreManagerReportPage() {
                                         <span className="text-xs text-slate-400">
                                             Actual:{' '}
                                             <span className="font-semibold text-slate-600 tabular-nums">
-                                                {formatCurrency(actualBalance)}
+                                                {compactCurrency(actualBalance)}
                                             </span>
                                         </span>
                                         {reservedAmount > 0 ? (
                                             <span className="text-xs text-amber-600">
                                                 Reserved:{' '}
                                                 <span className="font-semibold tabular-nums">
-                                                    {formatCurrency(reservedAmount)}
+                                                    {compactCurrency(reservedAmount)}
                                                 </span>
                                             </span>
                                         ) : (
@@ -631,7 +631,7 @@ export default function StoreManagerReportPage() {
                     icon={<Lock className="w-4 h-4 text-amber-600" />}
                     bg="bg-amber-50"
                     label="Reserved Amount"
-                    value={formatCurrency(reservedAmount)}
+                    value={compactCurrency(reservedAmount)}
                     sub={submitted.length > 0 ? `${submitted.length} active reservation${submitted.length > 1 ? "s" : ""}` : "No active reservations"}
                     subColor={reservedAmount > 0 ? "text-amber-600" : "text-emerald-600"}
                 />
@@ -641,19 +641,19 @@ export default function StoreManagerReportPage() {
                     icon={<Wallet className="w-4 h-4 text-indigo-600" />}
                     bg="bg-indigo-50"
                     label="Actual Balance"
-                    value={actualBalance !== null ? formatCurrency(actualBalance) : "—"}
+                    value={actualBalance !== null ? compactCurrency(actualBalance) : "—"}
                     sub="Finalized ledger balance"
                 />
             </div>
 
             {/* Second row: pending exposure count + executed count + target float + largest expense */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-5 mb-8">
                 <StatCard
                     icon={<Clock className="w-4 h-4 text-amber-500" />}
                     bg="bg-amber-50"
                     label="Pending Exposure"
                     value={String(submitted.length)}
-                    sub={submitted.length > 0 ? `${formatCurrency(totalSubmitted)} reserved` : "No active reservations"}
+                    sub={submitted.length > 0 ? `${compactCurrency(totalSubmitted)} reserved` : "No active reservations"}
                     subColor={submitted.length > 0 ? "text-amber-600" : "text-emerald-600"}
                 />
                 <StatCard
@@ -661,21 +661,21 @@ export default function StoreManagerReportPage() {
                     bg="bg-emerald-50"
                     label="Executed Expenses"
                     value={String(executed.length)}
-                    sub={executed.length > 0 ? `${formatCurrency(totalExecuted)} total` : "None this period"}
+                    sub={executed.length > 0 ? `${compactCurrency(totalExecuted)} total` : "None this period"}
                     subColor={executed.length > 0 ? "text-emerald-600" : "text-slate-400"}
                 />
                 <StatCard
                     icon={<Target className="w-4 h-4 text-slate-500" />}
                     bg="bg-slate-100"
                     label="Target Float"
-                    value={targetFloat > 0 ? formatCurrency(targetFloat) : "—"}
+                    value={targetFloat > 0 ? compactCurrency(targetFloat) : "—"}
                     sub="Ideal cash on hand"
                 />
                 <StatCard
                     icon={<ArrowUpCircle className="w-4 h-4 text-amber-600" />}
                     bg="bg-amber-50"
                     label="Largest Expense"
-                    value={formatCurrency(largestExpense)}
+                    value={compactCurrency(largestExpense)}
                 />
             </div>
 
@@ -684,7 +684,7 @@ export default function StoreManagerReportPage() {
             ══════════════════════════════════════════════════════════════════ */}
             <SectionHeading title="Treasury Intelligence" />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-5 mb-4">
                 <StatCard
                     icon={<Timer className="w-4 h-4 text-indigo-600" />}
                     bg="bg-indigo-50"
@@ -708,7 +708,7 @@ export default function StoreManagerReportPage() {
                     icon={<TrendingDown className="w-4 h-4 text-orange-500" />}
                     bg="bg-orange-50"
                     label="Avg Monthly Burn"
-                    value={avgMonthlyBurn > 0 ? formatCurrency(avgMonthlyBurn) : "—"}
+                    value={avgMonthlyBurn > 0 ? compactCurrency(avgMonthlyBurn) : "—"}
                     sub={
                         activeMonthCount > 0
                             ? `Based on ${activeMonthCount} active month${activeMonthCount > 1 ? "s" : ""}`
@@ -723,7 +723,7 @@ export default function StoreManagerReportPage() {
                     sub={
                         pendingExposurePct === null
                             ? (actualBalance === null ? "Balance unavailable" : "No active reservations")
-                            : `${formatCurrency(totalSubmitted)} of actual balance`
+                            : `${compactCurrency(totalSubmitted)} of actual balance`
                     }
                     subColor={
                         pendingExposurePct === null ? "text-slate-400"
@@ -742,7 +742,7 @@ export default function StoreManagerReportPage() {
                         credits === null
                             ? "—"
                             : lastTopUp
-                                ? formatCurrency(lastTopUp.amount)
+                                ? compactCurrency(lastTopUp.amount)
                                 : "—"
                     }
                     sub={
@@ -1308,6 +1308,13 @@ function SectionHeading({ title }: { title: string }) {
     );
 }
 
+function kpiValueSize(value: string): string {
+    const n = value.length
+    if (n <= 4) return 'text-3xl'
+    if (n <= 7) return 'text-2xl'
+    return 'text-xl'
+}
+
 function StatCard({
     icon, bg, label, value, sub, subColor = "text-slate-400",
 }: {
@@ -1319,13 +1326,15 @@ function StatCard({
     subColor?: string;
 }) {
     return (
-        <Card className="rounded-xl border border-slate-200 shadow-sm h-full">
-            <CardContent className="flex items-start gap-3 px-5 py-5">
-                <div className={`p-2 rounded-lg ${bg} flex-shrink-0 mt-0.5`}>{icon}</div>
-                <div className="min-w-0">
-                    <p className="text-xs font-medium text-slate-500 leading-tight">{label}</p>
-                    <p className="text-xl font-bold text-slate-900 mt-1 leading-tight tabular-nums">{value}</p>
-                    {sub && <p className={`text-xs mt-1 font-medium ${subColor}`}>{sub}</p>}
+        <Card className="rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden">
+            <CardContent className="p-5 lg:p-6 flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-3">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] leading-snug">{label}</p>
+                    <div className={`p-2 rounded-xl ${bg} flex-shrink-0`}>{icon}</div>
+                </div>
+                <div>
+                    <p className={`font-bold text-slate-900 tabular-nums leading-none ${kpiValueSize(value)}`}>{value}</p>
+                    {sub && <p className={`text-xs mt-1.5 font-medium leading-snug ${subColor}`}>{sub}</p>}
                 </div>
             </CardContent>
         </Card>
