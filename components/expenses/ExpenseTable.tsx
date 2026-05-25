@@ -5,6 +5,7 @@ import { format } from 'date-fns'
 import { Badge } from '@/components/ui/Badge'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { Paperclip, ChevronRight } from 'lucide-react'
+import { ReceiptLink } from './ReceiptLink'
 import type { Expense } from '@/types'
 
 interface ExpenseTableProps {
@@ -73,19 +74,10 @@ export function ExpenseTable({ expenses, loading }: ExpenseTableProps) {
                 <Badge status={expense.status} />
               </td>
               <td className="px-6 py-3 text-center">
-                {expense.receipt_url ? (
-                  <a
-                    href={expense.receipt_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-indigo-600 hover:text-indigo-700"
-                    title="View receipt"
-                  >
-                    <Paperclip size={14} className="mx-auto" />
-                  </a>
-                ) : (
-                  <span className="text-slate-200">—</span>
-                )}
+                {expense.receipt_url
+                  ? <ReceiptLink url={expense.receipt_url} iconOnly />
+                  : <span className="text-slate-200">—</span>
+                }
               </td>
               <td className="px-4 py-3">
                 <Link href={`/expenses/${expense.id}`}>

@@ -15,10 +15,11 @@ import { Card, CardContent, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { ReceiptUpload } from '@/components/expenses/ReceiptUpload'
+import { ReceiptLink } from '@/components/expenses/ReceiptLink'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { format } from 'date-fns'
 import {
-  ArrowLeft, Paperclip, AlertTriangle, Clock,
+  ArrowLeft, AlertTriangle, Clock,
   Edit2, Trash2, Send,
 } from 'lucide-react'
 import type { Category, Expense, AuditLog } from '@/types'
@@ -387,14 +388,10 @@ export default function ExpenseDetailPage() {
           {expense.receipt_url && (
             <div>
               <p className="text-xs text-slate-400 font-medium uppercase tracking-wide mb-1">Receipt</p>
-              <a
-                href={expense.receipt_url}
-                target="_blank"
-                rel="noopener noreferrer"
+              <ReceiptLink
+                url={expense.receipt_url}
                 className="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-700 font-medium"
-              >
-                <Paperclip size={14} /> View Receipt
-              </a>
+              />
             </div>
           )}
 

@@ -8,7 +8,8 @@ import { useAuth } from '@/lib/hooks/useAuth'
 import { ApprovalActions } from '@/components/approvals/ApprovalActions'
 import { Card } from '@/components/ui/Card'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { Paperclip, Clock, CheckSquare } from 'lucide-react'
+import { Clock, CheckSquare } from 'lucide-react'
+import { ReceiptLink } from '@/components/expenses/ReceiptLink'
 
 export default function ApprovalsPage() {
   const { user } = useAuth()
@@ -93,19 +94,10 @@ export default function ApprovalsPage() {
                       {expense.creator?.name ?? '—'}
                     </td>
                     <td className="px-6 py-3 text-center">
-                      {expense.receipt_url ? (
-                        <a
-                          href={expense.receipt_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-indigo-600 hover:text-indigo-700"
-                          title="View receipt"
-                        >
-                          <Paperclip size={14} className="mx-auto" />
-                        </a>
-                      ) : (
-                        <span className="text-slate-200">—</span>
-                      )}
+                      {expense.receipt_url
+                        ? <ReceiptLink url={expense.receipt_url} iconOnly />
+                        : <span className="text-slate-200">—</span>
+                      }
                     </td>
                     <td className="px-6 py-3 text-right">
                       <ApprovalActions
@@ -133,15 +125,10 @@ export default function ApprovalsPage() {
                       {expense.category?.name} · {format(new Date(expense.created_at), 'd MMM yyyy')}
                     </p>
                     {expense.receipt_url && (
-                      <a
-                        href={expense.receipt_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <ReceiptLink
+                        url={expense.receipt_url}
                         className="inline-flex items-center gap-1 text-xs text-indigo-600 mt-1"
-                      >
-                        <Paperclip size={11} />
-                        View receipt
-                      </a>
+                      />
                     )}
                   </div>
                   <p className="text-base font-bold text-slate-800 flex-shrink-0">

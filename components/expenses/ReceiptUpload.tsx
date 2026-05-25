@@ -35,8 +35,9 @@ export function ReceiptUpload({ value, onChange, onUploadingChange, disabled }: 
       const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
       const { data, error: uploadError } = await supabase.storage.from('receipts').upload(filename, file)
       if (uploadError) { setError(uploadError.message); return }
-      const { data: urlData } = supabase.storage.from('receipts').getPublicUrl(data.path)
-      onChange(urlData.publicUrl)
+      // Store the bare storage path (not a public URL) so the signed URL relay
+      // can always generate a fresh signed URL, regardless of bucket visibility.
+      onChange(data.path)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed. Please try again.')
     } finally {
@@ -49,9 +50,12 @@ export function ReceiptUpload({ value, onChange, onUploadingChange, disabled }: 
     if (!value || removing || uploading) return
     setRemoving(true); setError(null)
     try {
-      const path = value.split('/receipts/')[1]
-      console.log('Receipt URL:', value)
-      console.log('Extracted path:', path)
+      // Handle both storage formats:
+      //   New: bare path   "1234-abc.jpg"
+      //   Old: full URL    "https://…/object/public/receipts/1234-abc.jpg"
+      const path = value.startsWith('http')
+        ? (value.match(/\/receipts\/([^?]+)/)?.[1] ?? null)
+        : value
       if (path) {
         const deletePromise = supabase.storage
           .from('receipts')
@@ -90,7 +94,8 @@ export function ReceiptUpload({ value, onChange, onUploadingChange, disabled }: 
     return (
       <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
         <FileImage size={20} className="text-indigo-600 flex-shrink-0" />
-        <a href={value} target="_blank" rel="noopener noreferrer"
+        <a href={`/api/storage/receipt-url?url=${encodeURIComponent(value)}`}
+          target="_blank" rel="noopener noreferrer"
           className="text-sm text-indigo-600 hover:underline truncate flex-1">
           View Receipt
         </a>

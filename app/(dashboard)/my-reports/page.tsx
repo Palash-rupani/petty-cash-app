@@ -32,7 +32,6 @@ import {
     Wallet,
     Receipt,
     ArrowUpCircle,
-    ExternalLink,
     CalendarDays,
     Clock,
     XCircle,
@@ -43,7 +42,9 @@ import {
     Timer,
     Banknote,
     Lock,
-} from "lucide-react";import { normalizeExpenseStatus } from "@/types";
+} from "lucide-react";
+import { normalizeExpenseStatus } from "@/types";
+import { ReceiptLink } from "@/components/expenses/ReceiptLink";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1123,14 +1124,10 @@ export default function StoreManagerReportPage() {
                                             <td className="px-5 py-3 text-slate-700 font-medium">{e.categories?.name ?? "—"}</td>
                                             <td className="px-5 py-3 font-semibold text-emerald-700 tabular-nums">{formatCurrency(e.amount)}</td>
                                             <td className="px-5 py-3">
-                                                {e.receipt_url ? (
-                                                    <a href={e.receipt_url} target="_blank" rel="noopener noreferrer"
-                                                        className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 text-xs font-medium transition-colors">
-                                                        View <ExternalLink className="w-3 h-3" />
-                                                    </a>
-                                                ) : (
-                                                    <span className="text-slate-300 text-xs">—</span>
-                                                )}
+                                                {e.receipt_url
+                                                    ? <ReceiptLink url={e.receipt_url} />
+                                                    : <span className="text-slate-300 text-xs">—</span>
+                                                }
                                             </td>
                                         </tr>
                                     ))}
@@ -1218,14 +1215,10 @@ export default function StoreManagerReportPage() {
                                             <td className="px-5 py-3 font-semibold text-slate-900 tabular-nums">{formatCurrency(e.amount)}</td>
                                             <td className="px-5 py-3"><Badge status={e.status as never} /></td>
                                             <td className="px-5 py-3">
-                                                {e.receipt_url ? (
-                                                    <a href={e.receipt_url} target="_blank" rel="noopener noreferrer"
-                                                        className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 text-xs font-medium transition-colors">
-                                                        View <ExternalLink className="w-3 h-3" />
-                                                    </a>
-                                                ) : (
-                                                    <span className="text-slate-300 text-xs">—</span>
-                                                )}
+                                                {e.receipt_url
+                                                    ? <ReceiptLink url={e.receipt_url} />
+                                                    : <span className="text-slate-300 text-xs">—</span>
+                                                }
                                             </td>
                                         </tr>
                                     ))}
@@ -1272,14 +1265,10 @@ export default function StoreManagerReportPage() {
                                         <td className="px-5 py-3 text-slate-900 font-semibold tabular-nums">{formatCurrency(e.amount)}</td>
                                         <td className="px-5 py-3"><Badge status={e.status as never} /></td>
                                         <td className="px-5 py-3">
-                                            {e.receipt_url ? (
-                                                <a href={e.receipt_url} target="_blank" rel="noopener noreferrer"
-                                                    className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 text-xs font-medium transition-colors">
-                                                    View <ExternalLink className="w-3 h-3" />
-                                                </a>
-                                            ) : (
-                                                <span className="text-slate-300 text-xs">—</span>
-                                            )}
+                                            {e.receipt_url
+                                                ? <ReceiptLink url={e.receipt_url} />
+                                                : <span className="text-slate-300 text-xs">—</span>
+                                            }
                                         </td>
                                     </tr>
                                 ))}
