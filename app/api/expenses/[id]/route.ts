@@ -198,7 +198,17 @@ export async function DELETE(
   }
 
   // Delete audit logs first (FK constraint)
-  await supabase.from('audit_logs').delete().eq('expense_id', id)
+  const { error: logsError } = await supabase
+  .from('audit_logs')
+  .delete()
+  .eq('expense_id', id)
+
+if (logsError) {
+  return NextResponse.json(
+    { error: logsError.message },
+    { status: 500 }
+  )
+}
 
   const { error } = await supabase.from('expenses').delete().eq('id', id)
 

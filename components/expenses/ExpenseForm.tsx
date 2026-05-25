@@ -16,7 +16,10 @@ import type { Category } from '@/types'
 const schema = z.object({
   category_id: z.string().min(1, 'Category is required'),
   amount: z.coerce.number().positive('Amount must be positive'),
-  description: z.string().optional(),
+  description: z
+  .string()
+  .trim()
+  .min(1, 'Description is required'),
 })
 
 type FormValues = z.infer<typeof schema>
