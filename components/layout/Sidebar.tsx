@@ -1,5 +1,4 @@
 'use client'
-import { Landmark } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
@@ -13,6 +12,8 @@ import {
   X,
   Building2,
   FileSpreadsheet,
+  Landmark,
+  History,
 } from 'lucide-react'
 import { cn } from '@/lib/utils/cn'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -77,6 +78,12 @@ const navItems: NavItem[] = [
     label: 'Reports Upload',
     href: '/reports/upload',
     icon: <FileSpreadsheet size={18} />,
+    roles: ['admin'],
+  },
+  {
+    label: 'Upload History',
+    href: '/reports/history',
+    icon: <History size={18} />,
     roles: ['admin'],
   },
 ]

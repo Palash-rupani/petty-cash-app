@@ -161,6 +161,10 @@ export function ExpenseForm({ onSuccess }: ExpenseFormProps) {
 
   // ── Submission ─────────────────────────────────────────────────────────────
   const submit = async (values: FormValues, status: 'draft' | 'submitted') => {
+    // Guard against duplicate submits from rapid clicks before React re-renders
+    // the disabled button state.
+    if (submitting || saving) return
+
     if (!user?.store_id) {
       setError('No store associated with your account. Contact admin.')
       return
@@ -422,7 +426,7 @@ export function ExpenseForm({ onSuccess }: ExpenseFormProps) {
           disabled={isSubmitDisabled}
           onClick={() => handleSubmit((v: FormValues) => submit(v, 'draft'))()}
         >
-          Save as Draft
+          {saving ? 'Saving...' : 'Save as Draft'}
         </Button>
         <Button
           type="button"
@@ -431,7 +435,7 @@ export function ExpenseForm({ onSuccess }: ExpenseFormProps) {
           disabled={isSubmitDisabled}
           onClick={() => handleSubmit((v: FormValues) => submit(v, 'submitted'))()}
         >
-          {receiptUploading ? 'Uploading receipt...' : 'Submit for Approval'}
+          {receiptUploading ? 'Uploading...' : submitting ? 'Submitting...' : 'Submit for Approval'}
         </Button>
       </div>
     </form>

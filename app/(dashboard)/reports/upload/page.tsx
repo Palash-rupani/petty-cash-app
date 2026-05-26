@@ -22,8 +22,12 @@ export default function ReportUploadPage() {
   }, [loading, user, router])
 
   const handleUpload = async () => {
+    // Guard: block duplicate uploads from rapid clicks before React re-renders
+    // the disabled button state.
+    if (isUploading) return
+
     if (!selectedType || !file) return
-    
+
     setIsUploading(true)
     setError(null)
     setSuccess(null)

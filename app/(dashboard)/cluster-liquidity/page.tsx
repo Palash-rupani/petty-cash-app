@@ -332,7 +332,7 @@ function TopUpModal({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div
                 className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
-                onClick={onClose}
+                onClick={state.submitting ? undefined : onClose}
             />
             <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm border border-slate-200 overflow-hidden">
                 {/* Header */}
@@ -350,7 +350,8 @@ function TopUpModal({
                     </div>
                     <button
                         onClick={onClose}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                        disabled={state.submitting}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         aria-label="Close"
                     >
                         <X className="w-4 h-4" />
@@ -453,7 +454,7 @@ function TopUpModal({
                         disabled={!isValid || state.submitting}
                         className="flex-1"
                     >
-                        Confirm Top-Up
+                        {state.submitting ? 'Submitting...' : 'Confirm Top-Up'}
                     </Button>
                 </div>
             </div>
@@ -712,6 +713,8 @@ export default function ClusterLiquidityPage() {
 
     const submitTopup = useCallback(async () => {
         if (!topup) return;
+        // Guard: block duplicate calls while submission is already in flight.
+        if (topup.submitting) return;
 
         const parsedAmount = parseFloat(topup.amount);
         if (!isFinite(parsedAmount) || parsedAmount <= 0) {

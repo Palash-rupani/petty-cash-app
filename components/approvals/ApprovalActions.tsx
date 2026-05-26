@@ -103,6 +103,8 @@ export function ApprovalActions({
   // Main approve handler
   // ────────────────────────────────────────────────────────────────────────
   const handleApprove = async () => {
+    // Guard: block duplicate calls while any action is already in flight.
+    if (approving || rejecting) return
 
     setError(null)
 
@@ -153,6 +155,8 @@ export function ApprovalActions({
   // Approve anyway
   // ────────────────────────────────────────────────────────────────────────
   const handleApproveAnyway = async () => {
+    // Guard: rapid double-click on "Approve Anyway" before modal closes.
+    if (approving || rejecting) return
 
     setWarnOpen(false)
 
@@ -163,6 +167,8 @@ export function ApprovalActions({
   // Reject handler
   // ────────────────────────────────────────────────────────────────────────
   const handleReject = async () => {
+    // Guard: block duplicate rejection calls from rapid clicks.
+    if (rejecting) return
 
     if (!reason.trim()) return
 
@@ -204,6 +210,7 @@ export function ApprovalActions({
         <Button
           size="sm"
           variant="danger"
+          disabled={approving || rejecting}
           onClick={() => setRejectOpen(true)}
         >
           <XCircle size={14} />
@@ -213,10 +220,11 @@ export function ApprovalActions({
         <Button
           size="sm"
           loading={approving}
+          disabled={approving || rejecting}
           onClick={handleApprove}
         >
           <CheckCircle size={14} />
-          Approve
+          {approving ? 'Approving...' : 'Approve'}
         </Button>
       </div>
 
@@ -291,6 +299,7 @@ export function ApprovalActions({
             <Button
               variant="ghost"
               className="flex-1"
+              disabled={approving}
               onClick={() => setWarnOpen(false)}
             >
               Cancel
@@ -299,9 +308,10 @@ export function ApprovalActions({
             <Button
               className="flex-1"
               loading={approving}
+              disabled={approving}
               onClick={handleApproveAnyway}
             >
-              Approve Anyway
+              {approving ? 'Approving...' : 'Approve Anyway'}
             </Button>
           </div>
         </div>
@@ -310,7 +320,7 @@ export function ApprovalActions({
       {/* ── Reject modal ─────────────────────────────────────────────── */}
       <Modal
         open={rejectOpen}
-        onClose={() => setRejectOpen(false)}
+        onClose={() => { if (!rejecting) setRejectOpen(false) }}
         title="Reject Expense"
       >
         <div className="space-y-4">
@@ -354,10 +364,10 @@ export function ApprovalActions({
               variant="danger"
               className="flex-1"
               loading={rejecting}
-              disabled={!reason.trim()}
+              disabled={!reason.trim() || rejecting}
               onClick={handleReject}
             >
-              Confirm Reject
+              {rejecting ? 'Rejecting...' : 'Confirm Reject'}
             </Button>
           </div>
         </div>

@@ -172,10 +172,10 @@ export async function DELETE(
     )
   }
 
-  // Verify ownership + draft status
+  // Verify ownership + draft status (also fetch receipt_url for storage cleanup)
   const { data: existing, error: fetchError } = await supabase
     .from('expenses')
-    .select('id, status, created_by')
+    .select('id, status, created_by, receipt_url')
     .eq('id', id)
     .single()
 
@@ -214,6 +214,29 @@ if (logsError) {
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  // Best-effort receipt file cleanup — runs after the DB delete succeeds so a
+  // storage failure never blocks the response. Worst case: an orphaned file
+  // remains in the bucket (recoverable), not a partial DB delete.
+  if (existing.receipt_url) {
+    // Support both storage formats:
+    //   New: bare path  "1234-abc.jpg"
+    //   Old: full URL   "https://…/object/public/receipts/1234-abc.jpg"
+    const storagePath = existing.receipt_url.startsWith('http')
+      ? (existing.receipt_url.match(/\/receipts\/([^?]+)/)?.[1] ?? null)
+      : existing.receipt_url
+
+    if (storagePath) {
+      const { error: storageError } = await supabase.storage
+        .from('receipts')
+        .remove([storagePath])
+
+      if (storageError) {
+        // Non-fatal — expense is already deleted; log for ops visibility.
+        console.error('[DELETE expense] Storage cleanup failed for path:', storagePath, storageError.message)
+      }
+    }
   }
 
   return NextResponse.json({ success: true })
