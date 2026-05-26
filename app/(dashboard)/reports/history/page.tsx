@@ -21,7 +21,7 @@ interface UploadedReport {
   storage_path: string
   processing_status: string
   uploaded_at: string
-  uploader: { name: string } | null
+  uploader: { name: string }[] | null
 }
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ export default function ReportHistoryPage() {
 
                     {/* Uploaded By */}
                     <td className="px-6 py-3.5 text-slate-600 whitespace-nowrap">
-                      {report.uploader?.name ?? '—'}
+                      {report.uploader?.[0]?.name ?? '—'}
                     </td>
 
                     {/* Uploaded At */}
