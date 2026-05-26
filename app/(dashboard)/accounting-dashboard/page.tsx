@@ -223,8 +223,8 @@ export default function EnterpriseTreasuryDashboard() {
 
                 // Build deterministic map
                 const clusterMap = new Map((clusterData ?? []).map((c) => [c.id, c.name]));
-                console.log("CLUSTER DATA:", clusterData);
-console.log("CLUSTER MAP:", Array.from(clusterMap.entries()));
+
+
 
                 // Manually enrich stores
                 const storeRows = (storeData ?? []).map((s) => ({
@@ -234,17 +234,7 @@ console.log("CLUSTER MAP:", Array.from(clusterMap.entries()));
                         name: clusterMap.get(s.cluster_id) ?? "Unknown Cluster",
                     },
                 })) as StoreRow[];
-                console.log("RAW STORE DATA:", storeData);
-
-console.log("ENRICHED STORES:", storeRows);
-
-storeRows.forEach((s) => {
-  console.log("STORE CHECK:", {
-    store: s.name,
-    clusterId: s.cluster_id,
-    cluster: s.cluster,
-  });
-});
+                
 
                 setStores(storeRows);
 
@@ -300,7 +290,7 @@ storeRows.forEach((s) => {
 
         // Seed from all stores
         stores.forEach((s) => {
-            console.log("GLOBAL POSITION STORE:", s);
+        
             const cid = s.cluster_id;
             if (!cid) return; // Skip stores without clusters
 
