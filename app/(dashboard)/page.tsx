@@ -28,10 +28,11 @@ export default function DashboardPage() {
 
   if (!user) return null
 
-  const roleGreetings = {
+  const roleGreetings: Record<string, string> = {
     store_manager: 'Your Store Overview',
     cluster_manager: 'Cluster Overview',
     accounting: 'System Overview',
+    admin: 'Admin Overview',
   }
 
   return (

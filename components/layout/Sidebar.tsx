@@ -12,6 +12,7 @@ import {
   Menu,
   X,
   Building2,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { cn } from '@/lib/utils/cn'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -72,13 +73,19 @@ const navItems: NavItem[] = [
     icon: <Landmark size={18} />,
     roles: ['cluster_manager'],
   },
-
+  {
+    label: 'Reports Upload',
+    href: '/reports/upload',
+    icon: <FileSpreadsheet size={18} />,
+    roles: ['admin'],
+  },
 ]
 
 const roleLabels: Record<Role, string> = {
   store_manager: 'Store Manager',
   cluster_manager: 'Cluster Manager',
   accounting: 'Accounting',
+  admin: 'Administrator',
 }
 
 export function Sidebar() {

@@ -2,6 +2,7 @@ export type Role =
   | 'store_manager'
   | 'cluster_manager'
   | 'accounting'
+  | 'admin'
 
 /**
  * Raw database lifecycle states.
