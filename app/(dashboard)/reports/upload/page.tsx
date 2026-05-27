@@ -15,6 +15,10 @@ export default function ReportUploadPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [processError, setProcessError] = useState<string | null>(null)
+  const [processSuccess, setProcessSuccess] = useState<string | null>(null)
+
   useEffect(() => {
     if (!loading && (!user || user.role !== 'admin')) {
       router.replace('/')
@@ -63,6 +67,31 @@ export default function ReportUploadPage() {
     }
   }
 
+  const handleProcess = async () => {
+    // Guard: block duplicate triggers before React re-renders the disabled state.
+    if (isProcessing) return
+
+    setIsProcessing(true)
+    setProcessError(null)
+    setProcessSuccess(null)
+
+    try {
+      const res = await fetch('/api/reports/process', { method: 'POST' })
+      const data = await res.json()
+
+      if (!res.ok) {
+        setProcessError(data.error || 'Failed to trigger processing workflow.')
+        return
+      }
+
+      setProcessSuccess('Processing workflow triggered. GitHub Actions is now running.')
+    } catch {
+      setProcessError('Network error — could not reach the server.')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   if (loading || !user || user.role !== 'admin') {
     return null
   }
@@ -76,6 +105,7 @@ export default function ReportUploadPage() {
         </p>
       </div>
 
+      {/* ── Upload card ─────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
         <div className="space-y-6 max-w-md">
           {error && (
@@ -133,6 +163,38 @@ export default function ReportUploadPage() {
             className="w-full h-10 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isUploading ? 'Uploading...' : 'Upload Report'}
+          </button>
+        </div>
+      </div>
+      {/* ── Run Processing card ──────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+        <div className="space-y-4 max-w-md">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-700">Run Processing</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Trigger the GitHub Actions ETL workflow to process all pending reports.
+            </p>
+          </div>
+
+          {processError && (
+            <div className="p-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg">
+              {processError}
+            </div>
+          )}
+
+          {processSuccess && (
+            <div className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg">
+              {processSuccess}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleProcess}
+            disabled={isProcessing}
+            className="w-full h-10 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isProcessing ? 'Processing...' : 'Run Processing'}
           </button>
         </div>
       </div>

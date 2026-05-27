@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server'
+import { createHash } from 'crypto'
 import { createClient } from '@/lib/supabase/server'
+
+export const maxDuration = 60
 
 export async function POST(req: Request) {
   try {
@@ -36,10 +39,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid report type' }, { status: 400 })
     }
 
-    // Validate file size (10MB)
-    const MAX_SIZE = 10 * 1024 * 1024
+    // Validate file size (50MB)
+    const MAX_SIZE = 50 * 1024 * 1024
     if (file.size > MAX_SIZE) {
-      return NextResponse.json({ error: 'File size exceeds 10MB limit' }, { status: 400 })
+      return NextResponse.json({ error: 'File size exceeds 50MB limit' }, { status: 400 })
     }
 
     // Validate file extension
@@ -47,6 +50,24 @@ export async function POST(req: Request) {
     const ext = filename.split('.').pop()?.toLowerCase()
     if (!ext || !['xlsx', 'xls', 'csv'].includes(ext)) {
       return NextResponse.json({ error: 'Invalid file type. Only .xlsx, .xls, and .csv are allowed' }, { status: 400 })
+    }
+
+    // Compute SHA-256 hash of file bytes for deduplication
+    const bytes = await file.arrayBuffer()
+    const fileHash = createHash('sha256').update(Buffer.from(bytes)).digest('hex')
+
+    // Reject if an identical file was already uploaded
+    const { data: existingUpload } = await supabase
+      .from('uploaded_reports')
+      .select('id')
+      .eq('file_hash', fileHash)
+      .maybeSingle()
+
+    if (existingUpload) {
+      return NextResponse.json(
+        { error: 'This report was already uploaded.' },
+        { status: 409 }
+      )
     }
 
     // Generate timestamp
@@ -63,10 +84,10 @@ export async function POST(req: Request) {
     // Generate storage path: raw/<reportType>/<reportType>_<timestamp>.<ext>
     const storagePath = `raw/${reportType}/${reportType}_${timestamp}.${ext}`
 
-    // 4. Upload to Supabase Storage
+    // 4. Upload to Supabase Storage (use pre-read bytes so we don't re-read the body)
     const { error: uploadError } = await supabase.storage
       .from('retail-ops')
-      .upload(storagePath, file, {
+      .upload(storagePath, bytes, {
         cacheControl: '3600',
         upsert: false
       })
@@ -76,7 +97,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Failed to upload file to storage' }, { status: 500 })
     }
 
-    // 5. Insert uploaded_reports row
+    // 5. Insert uploaded_reports row (file_hash stored for future dedup checks)
     const { error: dbError } = await supabase
       .from('uploaded_reports')
       .insert({
@@ -84,7 +105,8 @@ export async function POST(req: Request) {
         original_filename: filename,
         storage_path: storagePath,
         uploaded_by: user.id,
-        processing_status: 'pending' // Default status
+        processing_status: 'pending',
+        file_hash: fileHash,
       })
 
     if (dbError) {
