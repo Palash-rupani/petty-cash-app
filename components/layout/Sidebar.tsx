@@ -14,6 +14,7 @@ import {
   FileSpreadsheet,
   Landmark,
   History,
+  Table2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils/cn'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -68,7 +69,14 @@ const navItems: NavItem[] = [
     href: '/accounting-dashboard',
     icon: <BarChart3 size={18} />,
     roles: ['accounting'],
-  }, {
+  },
+  {
+    label: 'Finance Reports',
+    href: '/accounting',
+    icon: <Table2 size={18} />,
+    roles: ['accounting'],
+  },
+  {
     label: 'Cluster Liquidity',
     href: '/cluster-liquidity',
     icon: <Landmark size={18} />,
