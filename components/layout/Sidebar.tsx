@@ -15,6 +15,7 @@ import {
   Landmark,
   History,
   Table2,
+  TrendingUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils/cn'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -75,6 +76,12 @@ const navItems: NavItem[] = [
     href: '/accounting',
     icon: <Table2 size={18} />,
     roles: ['accounting'],
+  },
+  {
+    label: 'Store Performance',
+    href: '/store-performance',
+    icon: <TrendingUp size={18} />,
+    roles: ['admin', 'accounting', 'cluster_manager'],
   },
   {
     label: 'Cluster Liquidity',
