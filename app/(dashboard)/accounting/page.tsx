@@ -6,12 +6,14 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, compactCurrency } from '@/lib/utils/formatCurrency'
+import { cn } from '@/lib/utils/cn'
 import { normalizeExpenseStatus } from '@/types'
 import {
   Download, ChevronUp, ChevronDown, ChevronsUpDown,
   ChevronLeft, ChevronRight, Loader2, TrendingUp, TrendingDown,
   ShieldAlert, DollarSign, Clock, Store, Building2, BarChart2,
 } from 'lucide-react'
+import { ExpenseDrawer } from '@/components/expenses/ExpenseDrawer'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Cell, AreaChart, Area,
@@ -228,6 +230,9 @@ export default function AccountingPage() {
 
   // ── Export state ──────────────────────────────────────────────────────────
   const [exportLoading, setExportLoading] = useState(false)
+
+  // ── Drawer state ──────────────────────────────────────────────────────────
+  const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null)
 
   // ── Load dropdown data once (small metadata — fetched direct from Supabase) ─
   useEffect(() => {
@@ -721,7 +726,16 @@ export default function AccountingPage() {
                 </tr>
               ) : (
                 expenses.map(e => (
-                  <tr key={e.id} className="hover:bg-slate-50/60 transition-colors bg-white">
+                  <tr
+                    key={e.id}
+                    onClick={() => setSelectedExpenseId(prev => prev === e.id ? null : e.id)}
+                    className={cn(
+                      'cursor-pointer transition-colors',
+                      e.id === selectedExpenseId
+                        ? 'bg-indigo-50 hover:bg-indigo-50/80'
+                        : 'bg-white hover:bg-slate-50/60'
+                    )}
+                  >
                     <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">
                       {formatMonth(e.expense_month)}
                     </td>
@@ -891,6 +905,12 @@ export default function AccountingPage() {
           </div>
         )}
       </div>
+
+      {/* ── Expense Detail Drawer ─────────────────────────────────────────── */}
+      <ExpenseDrawer
+        expenseId={selectedExpenseId}
+        onClose={() => setSelectedExpenseId(null)}
+      />
 
     </div>
   )

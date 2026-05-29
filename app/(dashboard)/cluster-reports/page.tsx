@@ -4,6 +4,8 @@ export const dynamic = "force-dynamic";
 
 import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
+import { cn } from "@/lib/utils/cn";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, compactCurrency } from "@/lib/utils/formatCurrency";
 import { getClusterAvailableBalances } from "@/lib/finance/getClusterAvailableBalances";
@@ -259,6 +261,7 @@ export default function ClusterTreasuryDashboard() {
     const supabase = createClient();
 
     const [stores, setStores] = useState<StoreRow[]>([]);
+    const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null);
     const [expenses, setExpenses] = useState<Expense[]>([]);
     const [rawTrendData, setRawTrendData] = useState<{ amount: number, expense_month: string | null, created_at: string, status: string, store_id: string }[]>([]);
     const [treasuryCredits, setTreasuryCredits] = useState<TreasuryCredit[]>([]);
@@ -644,6 +647,7 @@ export default function ClusterTreasuryDashboard() {
     // ─────────────────────────────────────────────────────────────────────────
 
     return (
+        <>
         <PageShell>
 
             {/* ══════════════════════════════════════════════════════════════════
@@ -1021,9 +1025,18 @@ export default function ClusterTreasuryDashboard() {
                                 <tbody>
                                     {agingApprovals.slice(0, 8).map((e, i) => {
                                         const days = daysAgo(e.created_at);
+                                        const isSelected = e.id === selectedExpenseId;
                                         return (
                                             <tr key={e.id}
-                                                className={`border-b border-slate-50 hover:bg-slate-50/70 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-slate-50/30"}`}>
+                                                onClick={() => setSelectedExpenseId(prev => prev === e.id ? null : e.id)}
+                                                className={cn(
+                                                    "border-b border-slate-50 cursor-pointer transition-colors",
+                                                    isSelected
+                                                        ? "bg-indigo-50 hover:bg-indigo-50/80"
+                                                        : i % 2 === 0
+                                                            ? "bg-white hover:bg-slate-50/70"
+                                                            : "bg-slate-50/30 hover:bg-slate-50/70"
+                                                )}>
                                                 <td className="px-5 py-3 font-medium text-slate-700 whitespace-nowrap">{e.stores?.name ?? "—"}</td>
                                                 <td className="px-5 py-3 font-semibold text-slate-900 tabular-nums">{formatCurrency(e.amount)}</td>
                                                 <td className="px-5 py-3">
@@ -1260,5 +1273,12 @@ export default function ClusterTreasuryDashboard() {
             </Card>
 
         </PageShell>
+
+        {/* Expense detail drawer — click any row in Aging Submissions to inspect */}
+        <ExpenseDrawer
+            expenseId={selectedExpenseId}
+            onClose={() => setSelectedExpenseId(null)}
+        />
+        </>
     );
 }

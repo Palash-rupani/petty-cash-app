@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { useExpenses } from '@/lib/hooks/useExpenses'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { ExpenseTable } from '@/components/expenses/ExpenseTable'
+import { ExpenseDrawer } from '@/components/expenses/ExpenseDrawer'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Plus, Filter } from 'lucide-react'
@@ -31,12 +32,16 @@ export default function ExpensesPage() {
   const [status, setStatus] = useState<ExpenseStatus | ''>('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null)
 
   const { expenses, loading } = useExpenses({
     status: status || undefined,
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
   })
+
+  // Drawer is available for roles that the API supports (accounting + cluster_manager).
+  const drawerEnabled = user?.role === 'accounting' || user?.role === 'cluster_manager'
 
   return (
     <div className="max-w-6xl space-y-4">
@@ -108,8 +113,23 @@ export default function ExpensesPage() {
 
       {/* Table */}
       <Card>
-        <ExpenseTable expenses={expenses} loading={loading} />
+        <ExpenseTable
+          expenses={expenses}
+          loading={loading}
+          selectedExpenseId={drawerEnabled ? (selectedExpenseId ?? undefined) : undefined}
+          onRowClick={drawerEnabled
+            ? (id) => setSelectedExpenseId(prev => prev === id ? null : id)
+            : undefined}
+        />
       </Card>
+
+      {/* Drawer — accounting and cluster_manager only */}
+      {drawerEnabled && (
+        <ExpenseDrawer
+          expenseId={selectedExpenseId}
+          onClose={() => setSelectedExpenseId(null)}
+        />
+      )}
     </div>
   )
 }

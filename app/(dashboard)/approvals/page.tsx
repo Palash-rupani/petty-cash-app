@@ -2,18 +2,25 @@
 
 export const dynamic = 'force-dynamic'
 
+import { useState } from 'react'
 import { format } from 'date-fns'
 import { useApprovals } from '@/lib/hooks/useApprovals'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { ApprovalActions } from '@/components/approvals/ApprovalActions'
+import { ExpenseDrawer } from '@/components/expenses/ExpenseDrawer'
 import { Card } from '@/components/ui/Card'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
+import { cn } from '@/lib/utils/cn'
 import { Clock, CheckSquare } from 'lucide-react'
 import { ReceiptLink } from '@/components/expenses/ReceiptLink'
 
 export default function ApprovalsPage() {
   const { user } = useAuth()
   const { pendingExpenses, loading, refetch } = useApprovals()
+  const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null)
+
+  const toggleDrawer = (id: string) =>
+    setSelectedExpenseId(prev => prev === id ? null : id)
 
   if (!user || (user.role !== 'cluster_manager' && user.role !== 'accounting')) {
     return (
@@ -73,7 +80,13 @@ export default function ApprovalsPage() {
                 {pendingExpenses.map((expense) => (
                   <tr
                     key={expense.id}
-                    className="border-b border-slate-50 hover:bg-slate-50 transition-colors"
+                    onClick={() => toggleDrawer(expense.id)}
+                    className={cn(
+                      'border-b border-slate-50 cursor-pointer transition-colors',
+                      expense.id === selectedExpenseId
+                        ? 'bg-indigo-50 hover:bg-indigo-50/80'
+                        : 'hover:bg-slate-50'
+                    )}
                   >
                     <td className="px-6 py-3 text-sm font-medium text-slate-700">
                       {expense.store?.name ?? '—'}
@@ -93,13 +106,13 @@ export default function ApprovalsPage() {
                     <td className="px-6 py-3 text-sm text-slate-500">
                       {expense.creator?.name ?? '—'}
                     </td>
-                    <td className="px-6 py-3 text-center">
+                    <td className="px-6 py-3 text-center" onClick={e => e.stopPropagation()}>
                       {expense.receipt_url
                         ? <ReceiptLink url={expense.receipt_url} iconOnly />
                         : <span className="text-slate-200">—</span>
                       }
                     </td>
-                    <td className="px-6 py-3 text-right">
+                    <td className="px-6 py-3 text-right" onClick={e => e.stopPropagation()}>
                       <ApprovalActions
                         expenseId={expense.id}
                         storeId={expense.store_id}
@@ -117,8 +130,17 @@ export default function ApprovalsPage() {
           {/* Mobile cards */}
           <div className="md:hidden divide-y divide-slate-100">
             {pendingExpenses.map((expense) => (
-              <div key={expense.id} className="p-4 space-y-3">
-                <div className="flex items-start justify-between gap-3">
+              <div
+                key={expense.id}
+                className={cn(
+                  'p-4 space-y-3 transition-colors',
+                  expense.id === selectedExpenseId ? 'bg-indigo-50' : ''
+                )}
+              >
+                <div
+                  className="flex items-start justify-between gap-3 cursor-pointer"
+                  onClick={() => toggleDrawer(expense.id)}
+                >
                   <div>
                     <p className="font-medium text-slate-800">{expense.store?.name}</p>
                     <p className="text-sm text-slate-500 mt-0.5">
@@ -153,6 +175,12 @@ export default function ApprovalsPage() {
       <p className="text-xs text-slate-400">
         {pendingExpenses.length} expense{pendingExpenses.length !== 1 ? 's' : ''} pending
       </p>
+
+      {/* Expense detail drawer — click any row to inspect */}
+      <ExpenseDrawer
+        expenseId={selectedExpenseId}
+        onClose={() => setSelectedExpenseId(null)}
+      />
     </div>
   )
 }
